@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome — my-learnings</title>
+  <meta name="description" content="A running notebook of things I'm learning — systems, ML infrastructure, and visualizations." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/post.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../" style="text-decoration:none">
+        <div class="logo-top">my · learnings</div>
+        <div class="logo-main">notes <span>&</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../">Home</a>
+        <a href="../#posts">Notes</a>
+        <a href="../#viz">Visualizations</a>
+        <a href="../about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="post">
+    <div class="container">
+      <header class="post-header">
+        <div class="post-meta">
+          <span>May 10, 2026</span>
+          <span class="tag">meta</span>
+        </div>
+        <h1 class="post-title">Welcome — what this site is</h1>
+        <p class="post-subtitle">
+          A small place to keep notes on things I'm learning, and the visualizations I build to understand them.
+        </p>
+      </header>
+
+      <article class="post-body">
+        <p>
+          I learn faster when I write things down. I learn even faster when I draw them. This site is
+          where both of those habits live — short notes about whatever I'm currently working through,
+          and the occasional interactive diagram for when a static page isn't enough.
+        </p>
+
+        <h2>How it's organized</h2>
+        <p>
+          The home page has two sections. <strong>Notes</strong> are short writings, like this one.
+          <strong>Visualizations</strong> are self-contained HTML pages that explain something
+          visually — usually because I couldn't find an explanation that clicked for me, so I made one.
+        </p>
+
+        <h2>Adding new content</h2>
+        <p>
+          To add a note, I create a new <code>.html</code> file in <code>posts/</code> (using
+          <code>posts/welcome.html</code> as a template) and add an entry to
+          <code>assets/js/posts.js</code>. Same idea for visualizations — drop them in
+          <code>visualizations/</code> and add a manifest entry.
+        </p>
+
+        <h2>Why static?</h2>
+        <p>
+          No build step means no maintenance creep. GitHub Pages serves the files directly,
+          and I can preview locally just by opening the HTML in a browser. The
+          tradeoff is more boilerplate per page — that's fine for the volume I'm planning.
+        </p>
+
+        <blockquote>
+          The point isn't to publish — it's to remember.
+        </blockquote>
+
+        <p>More to come.</p>
+      </article>
+
+      <nav class="post-nav">
+        <a href="../">← All notes</a>
+        <a href="../#viz">Visualizations →</a>
+      </nav>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>© <span id="year"></span> my-learnings</div>
+      <div><a href="../">home</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>

@@ -1,0 +1,2050 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L40S GPU & Triton — Multi-Model Serving Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050810; --surface: #0a0f1e; --panel: #0d1428; --panel2: #111a30;
+    --border: #1a2540; --border2: #243050; --text: #c8d8f0; --dim: #5a7090;
+    --acc1: #00d4ff; --acc2: #a855f7; --acc3: #10b981; --acc4: #f59e0b;
+    --acc5: #ef4444; --acc6: #ec4899;
+    --m1: #00d4ff; --m2: #a855f7; --m3: #10b981; --m4: #f59e0b;
+    --cuda: #00d4ff; --tensor: #a855f7;
+    --hw: #00d4ff; --sw: #a855f7;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; overflow-x: hidden;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% 0%, rgba(0,212,255,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(168,85,247,0.05) 0%, transparent 60%);
+  }
+  header {
+    padding: 24px 40px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px;
+    background: linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%);
+  }
+  .logo { font-family: 'Syne', sans-serif; }
+  .logo-top { font-size: 11px; letter-spacing: 0.25em; color: var(--acc1); text-transform: uppercase; }
+  .logo-main { font-size: 22px; font-weight: 800; color: #fff; line-height: 1.1; }
+  .logo-main span { color: var(--acc1); }
+  .badge { font-size: 10px; letter-spacing: 0.15em; padding: 4px 10px; border: 1px solid var(--acc1); color: var(--acc1); border-radius: 2px; text-transform: uppercase; }
+
+  section { padding: 28px 40px; border-bottom: 1px solid var(--border); }
+  @media (max-width: 700px) { section { padding: 24px 20px; } header { padding: 20px; } .toc { padding: 14px 20px; } }
+  .sec-label {
+    font-size: 10px; letter-spacing: 0.2em; color: var(--dim);
+    text-transform: uppercase; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .sec-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  h3.section-h { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 12px; }
+  .lead { font-size: 12px; line-height: 1.8; color: var(--text); margin-bottom: 14px; }
+  .lead strong { color: var(--acc1); }
+  .lead em { color: var(--acc2); font-style: normal; }
+
+  /* TWO-COL LAYOUT */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* SM EXPLAINER */
+  #sec-sm-intro { background: var(--surface); }
+  .sm-diagram { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .sm-title { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: 0.15em; margin-bottom: 10px; text-transform: uppercase; }
+  .sm-partitions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .sm-partition { background: var(--panel2); border: 1px solid var(--border2); border-radius: 4px; padding: 8px; }
+  .sm-partition-title { font-size: 9px; color: var(--dim); margin-bottom: 6px; text-align: center; letter-spacing: 0.1em; }
+  .core-row { display: grid; grid-template-columns: repeat(16, 1fr); gap: 1px; margin-bottom: 4px; }
+  .cuda-core { aspect-ratio: 1; background: var(--border2); border-radius: 1px; transition: background 0.15s, box-shadow 0.15s; }
+  .cuda-core.fire { background: var(--cuda); box-shadow: 0 0 4px var(--cuda); }
+  .tensor-core { height: 16px; background: var(--border2); border-radius: 2px; margin-top: 4px; font-size: 8px; color: #fff; text-align: center; line-height: 16px; letter-spacing: 0.1em; transition: all 0.2s; }
+  .tensor-core.fire { background: linear-gradient(90deg, var(--tensor), var(--acc6)); box-shadow: 0 0 8px var(--tensor); }
+  .sm-shared-mem { margin-top: 8px; padding: 8px; background: var(--bg); border: 1px dashed var(--border2); border-radius: 3px; text-align: center; font-size: 9px; color: var(--dim); letter-spacing: 0.1em; }
+
+  /* COMPARISON TABLE */
+  table.compare { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 11px; }
+  table.compare th, table.compare td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  table.compare th { color: var(--dim); font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; font-size: 9px; }
+  table.compare td.label { color: var(--dim); font-size: 10px; }
+  table.compare td.cuda { color: var(--cuda); font-weight: 600; }
+  table.compare td.tensor { color: var(--tensor); font-weight: 600; }
+  table.compare td.hw { color: var(--hw); font-weight: 600; }
+  table.compare td.sw { color: var(--sw); font-weight: 600; }
+
+  /* KERNEL PIPELINE (§01) */
+  .kernel-viz {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 16px; min-height: 360px; position: relative; overflow: hidden;
+  }
+  .kernel-viz-title { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: 0.15em; margin-bottom: 12px; text-transform: uppercase; }
+  canvas.kernel-canvas { display: block; width: 100%; height: 320px; }
+
+  /* TRANSFORMER LAYER VIZ (§02) */
+  .layer-viz { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .layer-stack { display: flex; flex-direction: column; gap: 4px; }
+  .layer-op {
+    display: grid; grid-template-columns: 28px 1fr 80px;
+    gap: 10px; align-items: center; padding: 8px 10px;
+    border: 1px solid var(--border2); border-radius: 3px;
+    background: var(--panel2); font-size: 11px;
+    transition: all 0.3s ease;
+  }
+  .layer-op.fire-cuda { border-color: var(--cuda); box-shadow: 0 0 12px rgba(0,212,255,0.4); background: rgba(0,212,255,0.05); }
+  .layer-op.fire-tensor { border-color: var(--tensor); box-shadow: 0 0 12px rgba(168,85,247,0.4); background: rgba(168,85,247,0.05); }
+  .op-num { color: var(--dim); font-size: 10px; text-align: center; }
+  .op-name { color: var(--text); }
+  .op-tag { font-size: 9px; padding: 3px 8px; border-radius: 2px; text-align: center; letter-spacing: 0.05em; font-weight: 700; }
+  .op-tag.cuda { background: rgba(0,212,255,0.15); color: var(--cuda); border: 1px solid var(--cuda); }
+  .op-tag.tensor { background: rgba(168,85,247,0.15); color: var(--tensor); border: 1px solid var(--tensor); }
+
+  /* THROUGHPUT BARS */
+  .throughput { margin-top: 16px; }
+  .throughput-row { margin-bottom: 12px; }
+  .throughput-label { font-size: 10px; color: var(--dim); margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .throughput-bar-bg { height: 28px; background: var(--bg); border-radius: 3px; overflow: hidden; position: relative; border: 1px solid var(--border); }
+  .throughput-bar { height: 100%; border-radius: 2px; display: flex; align-items: center; padding: 0 10px; font-size: 11px; font-weight: 700; color: rgba(0,0,0,0.85); }
+
+  /* TWO LAYERS (§07) */
+  .two-layers { display: flex; flex-direction: column; gap: 8px; }
+  .layer-block { background: var(--panel); border-radius: 6px; padding: 18px; position: relative; }
+  .layer-block.sw-layer { border: 1px solid var(--sw); }
+  .layer-block.hw-layer { border: 1px solid var(--hw); }
+  .layer-stamp { position: absolute; top: -8px; left: 16px; padding: 2px 10px; font-size: 9px; letter-spacing: 0.15em; border-radius: 2px; font-weight: 700; }
+  .layer-stamp.sw { background: var(--sw); color: #000; }
+  .layer-stamp.hw { background: var(--hw); color: #000; }
+  .layer-content { display: grid; grid-template-columns: 200px 1fr; gap: 18px; align-items: center; margin-top: 8px; }
+  @media (max-width: 800px) { .layer-content { grid-template-columns: 1fr; } }
+  .layer-title { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; color: #fff; }
+  .layer-sub { font-size: 10px; color: var(--dim); margin-top: 4px; }
+  .layer-boxes { display: flex; gap: 8px; flex-wrap: wrap; }
+  .layer-box { padding: 8px 12px; background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px; font-size: 10px; min-width: 120px; }
+  .layer-box-title { color: var(--text); font-weight: 600; font-size: 11px; margin-bottom: 2px; }
+  .layer-box-desc { color: var(--dim); font-size: 9px; line-height: 1.4; }
+  .layer-box.sw-box { border-left: 3px solid var(--sw); }
+  .layer-box.hw-box { border-left: 3px solid var(--hw); }
+
+  .layer-arrow { text-align: center; color: var(--dim); font-size: 12px; padding: 6px 0; letter-spacing: 0.2em; }
+  .layer-arrow .arrow { color: var(--acc1); font-size: 18px; }
+
+  /* INSTANCE GROUP VRAM COMPARISON (§09) */
+  .vram-scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+  @media (max-width: 1100px) { .vram-scenarios { grid-template-columns: 1fr; } }
+  .vram-scenario { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .vram-scenario.scenario-good { border-color: var(--acc3); }
+  .vram-scenario.scenario-bad { border-color: var(--acc4); }
+  .vram-scenario.scenario-best { border-color: var(--acc1); }
+  .vram-scenario h4 { font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .vram-scenario .h4-sub { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; margin-bottom: 12px; text-transform: uppercase; }
+  .vram-stack { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; }
+  .vram-block {
+    padding: 8px 12px; border-radius: 3px; font-size: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+    color: rgba(0,0,0,0.85); font-weight: 600;
+    position: relative;
+  }
+  .vram-block.weight { background: var(--m1); }
+  .vram-block.workspace { background: var(--m2); color: rgba(255,255,255,0.95); }
+  .vram-block.kvcache { background: var(--m4); }
+  .vram-block.shared { background: var(--m3); }
+  .vram-block.dup-marker { background: rgba(239,68,68,0.15); color: var(--acc5); border: 1px dashed var(--acc5); font-weight: 700; }
+  .vram-block .gb { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 12px; }
+  .vram-total {
+    padding: 10px 12px; background: var(--bg); border-radius: 3px;
+    font-size: 11px; color: var(--text); display: flex; justify-content: space-between;
+    border-top: 2px solid var(--border2);
+  }
+  .vram-total .total-val { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 14px; }
+  .vram-total .total-good { color: var(--acc3); }
+  .vram-total .total-bad { color: var(--acc5); }
+
+  .scenario-note { font-size: 10px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+  .scenario-note strong { color: var(--text); }
+
+  /* What's Duplicated Diagram */
+  .duplication-anatomy {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 16px; margin-top: 16px;
+  }
+  .dup-row { display: grid; grid-template-columns: 200px 1fr 120px; gap: 14px; padding: 10px; border-bottom: 1px solid var(--border); align-items: center; font-size: 11px; }
+  @media (max-width: 800px) { .dup-row { grid-template-columns: 1fr; gap: 6px; } .dup-row .dup-status { justify-self: start; } }
+  .dup-row:last-child { border-bottom: none; }
+  .dup-component { color: var(--text); font-weight: 600; }
+  .dup-component .desc { color: var(--dim); font-weight: 400; font-size: 10px; margin-top: 2px; }
+  .dup-status { font-size: 10px; padding: 4px 10px; border-radius: 2px; text-align: center; font-weight: 700; }
+  .dup-yes { background: rgba(239,68,68,0.15); color: var(--acc5); border: 1px solid var(--acc5); }
+  .dup-no { background: rgba(16,185,129,0.15); color: var(--acc3); border: 1px solid var(--acc3); }
+  .dup-explain { color: var(--dim); font-size: 10px; line-height: 1.6; }
+
+  /* VRAM */
+  .vram-bar-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; height: 56px; display: flex; margin-bottom: 20px; }
+  .vram-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; color: rgba(0,0,0,0.85); transition: all 0.6s ease; position: relative; overflow: hidden; }
+  .vram-seg::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 60%); pointer-events: none; }
+  .vram-seg:hover { filter: brightness(1.15); }
+  .vram-legend { display: flex; flex-wrap: wrap; gap: 16px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .vram-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+  @media (max-width: 700px) { .vram-stats { grid-template-columns: repeat(2, 1fr); } }
+  .vstat { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px; }
+  .vstat-val { font-size: 20px; font-weight: 700; font-family: 'Syne', sans-serif; }
+  .vstat-lbl { font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.1em; }
+
+  /* TIMELINE */
+  .ts-row { display: flex; align-items: center; margin-bottom: 3px; }
+  .ts-name { width: 140px; flex-shrink: 0; font-size: 10px; padding-right: 10px; display: flex; align-items: center; gap: 6px; }
+  .ts-line { flex: 1; display: flex; gap: 2px; }
+  .ts-slot { flex: 1; height: 28px; border-radius: 2px; background: var(--panel); border: 1px solid var(--border); transition: background 0.15s, box-shadow 0.15s; }
+
+  /* CUDA GRID */
+  .cuda-layout { display: grid; grid-template-columns: 1fr 280px; gap: 24px; align-items: start; }
+  @media (max-width: 900px) { .cuda-layout { grid-template-columns: 1fr; } }
+  .sm-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 3px; }
+  .sm-block { aspect-ratio: 1; border-radius: 3px; transition: all 0.2s ease; border: 1px solid var(--border); background: var(--panel); position: relative; }
+  .sm-block::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 60%); border-radius: 3px; }
+  .sm-block.fire-1 { background: var(--m1); box-shadow: 0 0 8px rgba(0,212,255,0.5); border-color: var(--m1); }
+  .sm-block.fire-2 { background: var(--m2); box-shadow: 0 0 8px rgba(168,85,247,0.5); border-color: var(--m2); }
+  .sm-block.fire-3 { background: var(--m3); box-shadow: 0 0 8px rgba(16,185,129,0.5); border-color: var(--m3); }
+  .sm-block.fire-4 { background: var(--m4); box-shadow: 0 0 8px rgba(245,158,11,0.5); border-color: var(--m4); }
+
+  .cuda-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 16px; margin-bottom: 12px; }
+  .cuda-panel-title { font-size: 10px; color: var(--dim); margin-bottom: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .util-bar-wrap { height: 8px; background: var(--bg); border-radius: 2px; overflow: hidden; margin: 4px 0 8px; }
+  .util-bar { height: 100%; border-radius: 2px; transition: width 1s ease; }
+  .util-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+
+  /* TRITON */
+  .triton-canvas-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; position: relative; overflow: hidden; }
+  canvas#tritonCanvas { display: block; width: 100%; height: 600px; }
+  .triton-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  @media (max-width: 800px) { .triton-grid { grid-template-columns: repeat(2, 1fr); } }
+  .triton-stat { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 12px; }
+  .triton-stat-val { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700; }
+  .triton-stat-lbl { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; margin-top: 2px; line-height: 1.5; }
+
+  /* CONTROLS */
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 7px 16px; border-radius: 3px; cursor: pointer;
+    border: 1px solid var(--border2); background: var(--panel); color: var(--text);
+    transition: all 0.2s ease;
+  }
+  .btn:hover { border-color: var(--acc1); color: var(--acc1); }
+  .btn.active { background: var(--acc1); color: #000; border-color: var(--acc1); font-weight: 700; }
+
+  .annotation { font-size: 11px; color: var(--dim); line-height: 1.7; background: var(--panel); border-left: 3px solid var(--acc1); padding: 12px 16px; border-radius: 0 4px 4px 0; margin-top: 16px; }
+  .annotation strong { color: var(--text); }
+  .annotation em { color: var(--acc1); font-style: normal; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  /* ── TENSOR CORE MATH (§03) ── */
+  .tc-section h4 { font-family: 'Syne', sans-serif; font-size: 16px; color: #fff; margin: 24px 0 12px; font-weight: 700; }
+
+  .mma-viz {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 20px; margin-top: 14px;
+  }
+  .mma-title { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: 0.15em; margin-bottom: 18px; text-transform: uppercase; }
+  .mma-layout {
+    display: flex; align-items: center; justify-content: center;
+    gap: 14px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .matrix-block {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px; background: var(--panel2); border: 1px solid var(--border2);
+    border-radius: 4px;
+  }
+  .matrix-label { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; line-height: 1; }
+  .matrix-dim { font-size: 10px; color: var(--dim); margin: 4px 0 8px; letter-spacing: 0.08em; }
+  .matrix-grid { display: grid; gap: 1px; background: var(--bg); padding: 2px; border-radius: 2px; }
+  .matrix-grid.grid-a { grid-template-columns: repeat(32, 4px); grid-template-rows: repeat(16, 4px); }
+  .matrix-grid.grid-b { grid-template-columns: repeat(8, 4px); grid-template-rows: repeat(32, 4px); }
+  .matrix-grid.grid-d { grid-template-columns: repeat(8, 6px); grid-template-rows: repeat(16, 6px); }
+  .mcell { background: var(--border2); transition: background 0.15s; }
+  .mcell.cell-a { background: rgba(0,212,255,0.35); }
+  .mcell.cell-b { background: rgba(168,85,247,0.35); }
+  .mcell.cell-d { background: rgba(245,158,11,0.25); }
+  .mcell.hot-row { background: var(--acc1) !important; box-shadow: 0 0 3px var(--acc1); }
+  .mcell.hot-col { background: var(--acc2) !important; box-shadow: 0 0 3px var(--acc2); }
+  .mcell.hot-out { background: var(--acc4) !important; box-shadow: 0 0 6px var(--acc4); }
+  .matrix-stats { font-size: 9px; color: var(--dim); margin-top: 8px; letter-spacing: 0.05em; }
+  .mma-op { font-family: 'Syne', sans-serif; font-size: 28px; font-weight: 800; color: var(--dim); }
+
+  .tensor-core-callout {
+    background: linear-gradient(90deg, var(--tensor), var(--acc6));
+    color: rgba(0,0,0,0.9); padding: 10px 18px; border-radius: 3px;
+    text-align: center; font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    margin: 16px auto; max-width: 520px;
+    box-shadow: 0 0 16px rgba(168,85,247,0.3);
+  }
+
+  .flop-breakdown {
+    background: var(--bg); border: 1px dashed var(--border2); border-radius: 4px;
+    padding: 16px 20px; text-align: center; font-size: 13px;
+    color: var(--text); line-height: 2.2; letter-spacing: 0.05em;
+  }
+  .flop-breakdown .num { color: var(--acc1); font-weight: 700; font-family: 'Syne', sans-serif; }
+  .flop-breakdown .num.big { color: var(--acc4); font-size: 22px; }
+
+  .mma-controls { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
+
+  /* Three Levels */
+  .three-levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+  @media (max-width: 900px) { .three-levels { grid-template-columns: 1fr; } }
+  .level-card {
+    background: var(--panel); border: 1px solid var(--border2); border-radius: 6px;
+    padding: 18px 16px 16px; position: relative;
+  }
+  .level-card.level-1 { border-left: 3px solid var(--acc1); }
+  .level-card.level-2 { border-left: 3px solid var(--acc2); }
+  .level-card.level-3 { border-left: 3px solid var(--acc4); }
+  .level-badge {
+    position: absolute; top: -8px; left: 14px; padding: 2px 8px;
+    background: var(--bg); border: 1px solid var(--border2); font-size: 9px;
+    color: var(--dim); letter-spacing: 0.15em; border-radius: 2px;
+  }
+  .level-card.level-1 .level-badge { color: var(--acc1); border-color: var(--acc1); }
+  .level-card.level-2 .level-badge { color: var(--acc2); border-color: var(--acc2); }
+  .level-card.level-3 .level-badge { color: var(--acc4); border-color: var(--acc4); }
+  .level-title { font-family: 'Syne', sans-serif; font-size: 13px; color: #fff; margin-top: 8px; margin-bottom: 12px; font-weight: 700; }
+  .level-formula { font-size: 12px; line-height: 2; color: var(--text); background: var(--bg); padding: 10px 14px; border-radius: 3px; }
+  .level-formula .num { color: var(--acc1); font-family: 'Syne', sans-serif; font-weight: 700; }
+  .level-formula .num.big { font-size: 18px; color: var(--acc4); }
+  .level-note { font-size: 10px; color: var(--dim); margin-top: 10px; font-style: italic; line-height: 1.6; }
+  .level-note .check { color: var(--acc3); }
+
+  /* Real example */
+  .real-example {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 18px; margin-top: 14px;
+  }
+  .re-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px; flex-wrap: wrap; gap: 10px;
+  }
+  .re-formula { font-size: 13px; color: var(--text); letter-spacing: 0.05em; }
+  .re-formula code {
+    background: var(--bg); padding: 3px 8px; border-radius: 2px;
+    color: var(--acc1); font-size: 12px; margin: 0 2px;
+  }
+
+  .tile-sweep-wrap {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 14px; overflow-x: auto;
+  }
+  .tile-sweep-label { font-size: 10px; color: var(--dim); margin-bottom: 8px; letter-spacing: 0.1em; display: flex; justify-content: space-between; }
+  .tile-sweep {
+    display: grid; gap: 1px; padding: 2px; background: var(--border);
+    border-radius: 2px;
+    width: fit-content;
+  }
+  .tile-cell {
+    width: 6px; height: 6px; background: var(--panel);
+    transition: background 0.05s;
+  }
+  .tile-cell.filled { background: var(--acc4); }
+  .tile-cell.active { background: #fff; box-shadow: 0 0 4px #fff; }
+
+  .re-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+  @media (max-width: 700px) { .re-metrics { grid-template-columns: repeat(2, 1fr); } }
+  .re-metric {
+    background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
+    padding: 10px 12px;
+  }
+  .re-metric-val { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; color: var(--acc1); }
+  .re-metric-lbl { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; margin-top: 2px; line-height: 1.5; }
+
+  .flow-row { display: flex; align-items: center; gap: 0; margin-top: 16px; overflow-x: auto; padding: 8px 0 12px; }
+  .flow-node { flex-shrink: 0; background: var(--panel); border: 1px solid var(--border2); border-radius: 4px; padding: 10px 14px; font-size: 10px; text-align: center; min-width: 110px; transition: all 0.4s ease; }
+  .flow-node-title { font-weight: 700; color: #fff; font-size: 11px; }
+  .flow-node-sub { color: var(--dim); margin-top: 2px; font-size: 9px; }
+  .flow-arrow { font-size: 18px; color: var(--dim); padding: 0 4px; flex-shrink: 0; transition: color 0.4s; }
+  .flow-node.lit { box-shadow: 0 0 16px var(--acc1); border-color: var(--acc1); transform: translateY(-2px); }
+  .flow-arrow.lit { color: var(--acc1); }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 40px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 10px; }
+  .toc a { color: var(--dim); text-decoration: none; padding: 4px 10px; border: 1px solid var(--border2); border-radius: 2px; transition: all 0.2s; letter-spacing: 0.05em; }
+  .toc a:hover { color: var(--acc1); border-color: var(--acc1); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-top">NVIDIA L40S · 48GB GDDR6 · Ada Lovelace</div>
+    <div class="logo-main">Multi-Model GPU + <span>Triton Serving</span></div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="badge">No MIG</span>
+    <span class="badge" style="border-color:var(--acc2);color:var(--acc2);">Time-Sliced</span>
+    <span class="badge" style="border-color:var(--acc3);color:var(--acc3);">142 SM</span>
+    <span class="badge" style="border-color:var(--acc4);color:var(--acc4);">Triton</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#s00">00 · The SM</a>
+  <a href="#s01">01 · SM vs Kernel</a>
+  <a href="#s02">02 · CUDA vs Tensor Cores</a>
+  <a href="#s03">03 · Inside the Tensor Core</a>
+  <a href="#s04">04 · VRAM Layout</a>
+  <a href="#s05">05 · Time-Slicing</a>
+  <a href="#s06">06 · SM Grid</a>
+  <a href="#s07">07 · Request Path</a>
+  <a href="#s08">08 · The Two Layers</a>
+  <a href="#s09">09 · Triton Live</a>
+  <a href="#s10">10 · Why Weights Duplicate</a>
+</nav>
+
+<!-- §00 — WHAT IS AN SM? -->
+<section id="s00">
+  <div class="sec-label">00 — What is a Streaming Multiprocessor (SM)?</div>
+  <div class="two-col">
+    <div>
+      <h3 class="section-h">An SM is one parallel "worker" on the GPU.</h3>
+      <p class="lead">An <strong>SM (Streaming Multiprocessor)</strong> is the fundamental compute unit of an NVIDIA GPU — like a CPU core, but built to run <em>thousands of threads in parallel</em>. The L40S has <strong>142 SMs</strong> on a single die, all working at once.</p>
+
+      <p class="lead">Each SM contains:</p>
+      <p class="lead" style="margin-left:14px;font-size:11px">
+        ▸ <strong>128 CUDA cores</strong> — simple math (add, multiply, softmax, GELU)<br>
+        ▸ <strong>4 Tensor Cores</strong> — matrix math (FP8 GEMM = the heavy LLM lifting)<br>
+        ▸ <strong>4 Warp Schedulers</strong> — dispatch threads in groups of 32 (a "warp")<br>
+        ▸ <strong>256 KB shared memory / L1 cache</strong> — fast scratchpad
+      </p>
+
+      <p class="lead">When an LLM generates a token: matrix multiplications run on <em>Tensor Cores</em>, attention softmax runs on <em>CUDA cores</em>, KV-cache reads come from <em>VRAM</em>. The <strong>Warp Scheduler</strong> picks which 32-thread warp runs each clock cycle.</p>
+
+      <p class="lead">Without MIG, all 142 SMs are a <em>single shared pool</em>. Whichever model has work queued gets the SMs — one model's kernels execute at a time, switching every few microseconds.</p>
+    </div>
+
+    <div class="sm-diagram">
+      <div class="sm-title">▸ Inside ONE SM — 4 sub-partitions</div>
+      <div class="sm-partitions" id="smPartitions"></div>
+      <div class="sm-shared-mem">256 KB SHARED MEMORY / L1 CACHE</div>
+      <div style="text-align:center;font-size:9px;color:var(--dim);margin-top:8px;letter-spacing:0.1em">
+        ↑ Replicated <span style="color:var(--acc1)">142×</span> across the L40S die ↑
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §01 — SM vs KERNEL -->
+<section id="s01" style="background:var(--surface)">
+  <div class="sec-label">01 — SM vs Kernel: Hardware vs Software</div>
+  <div class="two-col">
+    <div>
+      <h3 class="section-h">One is silicon. One is code.</h3>
+      <p class="lead">SMs and kernels are often confused because they're tightly coupled, but they're fundamentally different things. <strong>SMs are hardware</strong>; <strong>kernels are software</strong>. A kernel is a function (CUDA C++ code) that runs <em>on</em> the SMs.</p>
+
+      <table class="compare">
+        <tr><th></th><th>SM</th><th>Kernel</th></tr>
+        <tr><td class="label">What it is</td><td class="hw">Physical silicon</td><td class="sw">A function in code</td></tr>
+        <tr><td class="label">Lives where</td><td class="hw">Etched on the die</td><td class="sw">In the model binary</td></tr>
+        <tr><td class="label">How many</td><td class="hw">Fixed: 142 on L40S</td><td class="sw">Hundreds per token</td></tr>
+        <tr><td class="label">Lifetime</td><td class="hw">Permanent (it's the chip)</td><td class="sw">Microseconds</td></tr>
+        <tr><td class="label">Analogy</td><td class="hw">A factory worker</td><td class="sw">A task you hand them</td></tr>
+      </table>
+
+      <p class="lead" style="margin-top:14px"><strong>One token from Nemotron 30B</strong> launches hundreds of kernels: embedding lookup → RMSNorm → QKV projection → flash attention → MLP gate → MLP up → SiLU → MLP down → ... × 64 transformer layers → LM head → sample. Each kernel runs on the SMs for a few microseconds, then the next one launches.</p>
+
+      <p class="lead">This is why <em>kernel fusion</em> (what TensorRT-LLM does) matters so much: combining 5 small kernels into 1 big one cuts launch overhead and keeps the SMs continuously busy. It's the single biggest reason TensorRT-LLM beats vanilla PyTorch by 2-3×.</p>
+    </div>
+
+    <div class="kernel-viz">
+      <div class="kernel-viz-title">▸ Kernels flowing through the SM scheduler · live</div>
+      <canvas class="kernel-canvas" id="kernelCanvas"></canvas>
+      <div style="font-size:9px;color:var(--dim);text-align:center;margin-top:8px;letter-spacing:0.05em">
+        Each colored block = one kernel. <span style="color:var(--acc1)">CUDA stream</span> queues them in order; the <span style="color:var(--acc2)">SM scheduler</span> dispatches them onto the SM grid.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §02 — CUDA vs TENSOR CORES -->
+<section id="s02">
+  <div class="sec-label">02 — CUDA Cores vs Tensor Cores</div>
+  <div class="two-col">
+    <div>
+      <h3 class="section-h">Two compute units. Two completely different jobs.</h3>
+      <p class="lead">Inside each SM live two kinds of math units. They look similar in marketing materials, but they do <em>fundamentally different operations</em>.</p>
+
+      <table class="compare">
+        <tr><th></th><th class="cuda">CUDA Core</th><th class="tensor">Tensor Core</th></tr>
+        <tr><td class="label">Operation</td><td class="cuda">One scalar op / clock</td><td class="tensor">One small matmul / clock</td></tr>
+        <tr><td class="label">Per SM (L40S)</td><td class="cuda">128</td><td class="tensor">4</td></tr>
+        <tr><td class="label">Total on L40S</td><td class="cuda">18,176</td><td class="tensor">568</td></tr>
+        <tr><td class="label">Best at</td><td class="cuda">Element-wise math</td><td class="tensor">GEMM (big matmul)</td></tr>
+        <tr><td class="label">LLM workload</td><td class="cuda">Softmax, GELU, norms</td><td class="tensor">QKV, attention, FFN</td></tr>
+        <tr><td class="label">Generation</td><td class="cuda">Stable</td><td class="tensor">4th gen on L40S</td></tr>
+      </table>
+
+      <p class="lead" style="margin-top:14px"><strong>Why this matters:</strong> Tensor Cores are <em>~8× faster</em> than CUDA cores for the same silicon area on FP8 matmuls. Modern LLM inference is unthinkable without them. This is also why <em>FP8 quantization</em> matters so much on L40S — Tensor Cores hit peak throughput at FP8.</p>
+
+      <div class="throughput">
+        <div class="throughput-row">
+          <div class="throughput-label">
+            <span style="color:var(--cuda)">CUDA Cores · FP32</span>
+            <span>91 TFLOPS</span>
+          </div>
+          <div class="throughput-bar-bg">
+            <div class="throughput-bar" style="background:var(--cuda);width:12%">91</div>
+          </div>
+        </div>
+        <div class="throughput-row">
+          <div class="throughput-label">
+            <span style="color:var(--tensor)">Tensor Cores · BF16</span>
+            <span>362 TFLOPS</span>
+          </div>
+          <div class="throughput-bar-bg">
+            <div class="throughput-bar" style="background:linear-gradient(90deg,var(--tensor),var(--acc6));width:49%">362</div>
+          </div>
+        </div>
+        <div class="throughput-row">
+          <div class="throughput-label">
+            <span style="color:var(--tensor)">Tensor Cores · FP8</span>
+            <span>733 TFLOPS</span>
+          </div>
+          <div class="throughput-bar-bg">
+            <div class="throughput-bar" style="background:linear-gradient(90deg,var(--tensor),var(--acc6));width:100%">733 ← LLM sweet spot</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layer-viz">
+      <div class="kernel-viz-title">▸ One Transformer layer · which unit runs each op</div>
+      <div class="layer-stack" id="layerStack"></div>
+      <div style="font-size:9px;color:var(--dim);text-align:center;margin-top:10px;letter-spacing:0.05em">
+        <span style="color:var(--cuda)">━━ CUDA</span> ops are quick & many · <span style="color:var(--tensor)">━━ Tensor</span> ops are few but eat ~95% of wall-clock time
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §03 — INSIDE THE TENSOR CORE -->
+<section id="s03" class="tc-section" style="background:var(--surface)">
+  <div class="sec-label">03 — Inside the Tensor Core · Tile Math &amp; Throughput</div>
+
+  <h3 class="section-h">Where does the "733 TFLOPS" number come from?</h3>
+  <p class="lead">Section §02 said Tensor Cores are <em>~8× faster</em> than CUDA cores. Now let's open the hood and see <strong>exactly what operation</strong> a Tensor Core performs in one clock cycle — and how 568 of them on a single die produce <strong>733 trillion FLOPs per second</strong>.</p>
+
+  <p class="lead">A Tensor Core doesn't multiply arbitrary matrices. It multiplies <em>fixed-size tiles</em>. On 4th-gen Tensor Cores (Ada Lovelace, what's in your L40S), the native FP8 tile shape is <strong>16 × 8 × 32</strong> — that is, matrix A is 16×32, matrix B is 32×8, output D is 16×8. One MMA (matrix-multiply-accumulate) instruction operates on this exact shape.</p>
+
+  <!-- ── VIZ 1: One MMA tile ── -->
+  <h4>▸ One MMA instruction · one tile multiply</h4>
+
+  <div class="mma-viz">
+    <div class="mma-title">▸ D[16×8] = A[16×32] × B[32×8] + C[16×8] · one MMA instruction</div>
+
+    <div class="mma-layout">
+      <div class="matrix-block">
+        <div class="matrix-label" style="color:var(--acc1)">A</div>
+        <div class="matrix-dim">16 rows × 32 cols · FP8</div>
+        <div class="matrix-grid grid-a" id="matA"></div>
+        <div class="matrix-stats">512 input values</div>
+      </div>
+      <div class="mma-op">×</div>
+      <div class="matrix-block">
+        <div class="matrix-label" style="color:var(--acc2)">B</div>
+        <div class="matrix-dim">32 rows × 8 cols · FP8</div>
+        <div class="matrix-grid grid-b" id="matB"></div>
+        <div class="matrix-stats">256 input values</div>
+      </div>
+      <div class="mma-op">=</div>
+      <div class="matrix-block">
+        <div class="matrix-label" style="color:var(--acc4)">D</div>
+        <div class="matrix-dim">16 rows × 8 cols · FP16/32</div>
+        <div class="matrix-grid grid-d" id="matD"></div>
+        <div class="matrix-stats">128 output values</div>
+      </div>
+    </div>
+
+    <div class="tensor-core-callout">
+      ▸ TENSOR CORE · 1 MMA INSTRUCTION · ~16 CLOCK CYCLES
+    </div>
+
+    <div class="flop-breakdown">
+      m × n × k = 16 × 8 × 32<br>
+      = <span class="num">4,096</span> multiplies &nbsp;+&nbsp; <span class="num">4,096</span> adds
+      &nbsp;=&nbsp; <span class="num big">8,192</span> FLOPs per MMA instruction
+    </div>
+
+    <div class="mma-controls">
+      <button class="btn active" id="btnMMAPlay" onclick="toggleMMA()">⏸ Pause animation</button>
+      <button class="btn" onclick="resetMMA()">↺ Reset</button>
+    </div>
+
+    <div style="font-size:10px;color:var(--dim);text-align:center;margin-top:10px;line-height:1.7">
+      Watch one output cell being computed: a <span style="color:var(--acc1)">row of A</span> dot-products with a <span style="color:var(--acc2)">column of B</span> over k=32 elements, producing one <span style="color:var(--acc4)">output cell in D</span>.
+    </div>
+  </div>
+
+  <!-- ── VIZ 2: Three levels of throughput ── -->
+  <h4>▸ Three levels of throughput · from instruction to silicon to spec sheet</h4>
+
+  <p class="lead">"How many calculations does a Tensor Core do?" has three different answers depending on which level you're asking about. This is where the confusion usually starts.</p>
+
+  <div class="three-levels">
+
+    <div class="level-card level-1">
+      <div class="level-badge">LEVEL 1</div>
+      <div class="level-title">Per MMA instruction<br>(what code issues)</div>
+      <div class="level-formula">
+        1 instruction = 16 × 8 × 32 tile<br>
+        = <span class="num">8,192</span> FLOPs<br>
+        over ~<span class="num">16</span> clock cycles
+      </div>
+      <div class="level-note">What CUDA code issues via <code style="color:var(--acc1)">mma.sync</code>. One warp (32 threads) cooperates on one MMA.</div>
+    </div>
+
+    <div class="level-card level-2">
+      <div class="level-badge">LEVEL 2</div>
+      <div class="level-title">Per Tensor Core per clock<br>(physical silicon)</div>
+      <div class="level-formula">
+        8,192 FLOPs ÷ 16 clocks<br>
+        = <span class="num big">512</span> FLOPs / clock<br>
+        = <span class="num">256</span> FMAs / clock
+      </div>
+      <div class="level-note">Pipelined throughput of one Tensor Core. FMA = fused multiply-add (1 mul + 1 add = 2 FLOPs).</div>
+    </div>
+
+    <div class="level-card level-3">
+      <div class="level-badge">LEVEL 3</div>
+      <div class="level-title">Aggregate L40S peak<br>(marketing number)</div>
+      <div class="level-formula">
+        <span class="num">568</span> cores × <span class="num">512</span> FLOPs × <span class="num">2.52</span> GHz<br>
+        = <span class="num big">732.6</span> TFLOPS
+      </div>
+      <div class="level-note">NVIDIA published: <span class="check">733 TFLOPS</span> · matches ✓ Real workloads achieve 60–85% of peak.</div>
+    </div>
+
+  </div>
+
+  <!-- ── VIZ 3: Real example ── -->
+  <h4>▸ Real example · QKV projection for one Nemotron 30B layer at batch=8</h4>
+
+  <div class="real-example">
+    <div class="re-header">
+      <div class="re-formula">
+        <code>[8 × 8192]</code> × <code>[8192 × 24576]</code> = <code>[8 × 24576]</code>
+      </div>
+      <div style="font-size:10px;color:var(--dim);letter-spacing:0.1em">
+        ▸ broken into <span style="color:var(--acc4)">16 × 8 × 32</span> tiles
+      </div>
+    </div>
+
+    <div class="tile-sweep-wrap">
+      <div class="tile-sweep-label">
+        <span>Output matrix · 16 rows (padded from 8) × 24,576 columns · sweep fills tiles left-to-right</span>
+        <span id="tileSweepProgress" style="color:var(--acc4)">0 / 3,072 tiles</span>
+      </div>
+      <div class="tile-sweep" id="tileSweep"></div>
+    </div>
+
+    <div class="re-metrics">
+      <div class="re-metric">
+        <div class="re-metric-val">3,072</div>
+        <div class="re-metric-lbl">OUTPUT TILES<br>(1 row × 3,072 cols of 16×8 tiles)</div>
+      </div>
+      <div class="re-metric">
+        <div class="re-metric-val">256</div>
+        <div class="re-metric-lbl">K-ACCUMULATIONS<br>per output tile (8192 / 32)</div>
+      </div>
+      <div class="re-metric">
+        <div class="re-metric-val">786,432</div>
+        <div class="re-metric-lbl">TOTAL MMAs<br>just for QKV in 1 layer</div>
+      </div>
+      <div class="re-metric">
+        <div class="re-metric-val">6.4 GFLOPs</div>
+        <div class="re-metric-lbl">TOTAL WORK<br>at peak = <span style="color:var(--acc3)">~8.8 μs</span></div>
+      </div>
+    </div>
+
+    <p class="lead" style="margin-top:18px;font-size:11px">Across all 64 transformer layers, QKV alone is <strong>~50 million MMA instructions per generated token</strong>. Add the attention matmuls, output projection, and three MLP matmuls and you're at <strong>~400 million MMAs per token</strong>. The L40S can theoretically chew through this in microseconds — but reality is bottlenecked by <em>memory bandwidth</em>, not Tensor Core throughput, especially during decode.</p>
+  </div>
+
+  <div class="annotation">
+    <strong>Why this matters in practice — arithmetic intensity:</strong>
+    <br>The Tensor Cores are so fast that they finish a tile faster than VRAM can deliver the next one. The ratio of <em>FLOPs done per byte fetched</em> is called <strong>arithmetic intensity</strong>. Low intensity = memory-bound = Tensor Cores idle waiting on data. High intensity = compute-bound = Tensor Cores saturated.
+    <br><br><strong>FP8 quantization helps twice:</strong> ① halves the bytes moved per parameter (so 864 GB/s bandwidth stretches further), and ② doubles Tensor Core throughput vs BF16 (256 vs 128 FMAs/clock). The two effects compound — this is why FP8 is the sweet spot for L40S LLM inference, not just a "memory savings" trick.
+    <br><br><strong>Prefill vs decode:</strong> During <em>prefill</em>, batch dimension is large (you're processing many prompt tokens at once), so M is big, tiles fill efficiently, Tensor Cores stay busy. During <em>decode</em>, batch=1 per request (one token at a time), M is tiny, most tiles are mostly empty, memory bandwidth becomes the bottleneck. <strong>This is exactly why continuous batching matters</strong> — it inflates the effective M dimension by stacking many requests' decode steps into one batched MMA, restoring Tensor Core utilization.
+  </div>
+</section>
+
+<!-- §04 — VRAM -->
+<section id="s04">
+  <div class="sec-label">04 — VRAM Layout · 48 GB Total</div>
+  <div class="vram-bar-wrap" id="vramBar"></div>
+  <div class="vram-legend" id="vramLegend"></div>
+  <div class="vram-stats" id="vramStats"></div>
+  <div class="annotation">
+    <strong>No MIG on L40S:</strong> all four models share one address space and compete for VRAM. The runtime budgets memory; models reside in VRAM <em>simultaneously</em>, but the GPU executes one model's kernels at a time via SM-scheduler context-switching.
+  </div>
+</section>
+
+<!-- §04 — TIMELINE -->
+<section id="s05" style="background:var(--surface)">
+  <div class="sec-label">05 — GPU Time-Slicing · live</div>
+  <div class="controls">
+    <button class="btn active" id="btnPlay" onclick="toggleTL()">⏸ Pause</button>
+    <button class="btn" onclick="resetTL()">↺ Reset</button>
+  </div>
+  <div id="tlContainer" style="overflow-x:auto"></div>
+  <div class="annotation">
+    Each cell = ~120 ms of GPU time. The SM scheduler grants the entire GPU to one model's CUDA stream at a time. <strong>Nemotron 30B</strong> dominates (chat traffic); embedding/reranker get quick slots between decode steps.
+  </div>
+</section>
+
+<!-- §05 — SM GRID -->
+<section id="s06">
+  <div class="sec-label">06 — All 142 SMs · which light up per model</div>
+  <div class="controls">
+    <button class="btn active" id="btn-m0" onclick="lightModel(0)">Nemotron 30B</button>
+    <button class="btn" id="btn-m1" onclick="lightModel(1)">VL 12B</button>
+    <button class="btn" id="btn-m2" onclick="lightModel(2)">Embedding 1B</button>
+    <button class="btn" id="btn-m3" onclick="lightModel(3)">Reranker 4B</button>
+    <button class="btn" id="btn-idle" onclick="lightModel(-1)">Idle</button>
+  </div>
+  <div class="cuda-layout">
+    <div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:10px">Each square = 1 SM. Lit squares = currently executing kernels for the selected model.</div>
+      <div class="sm-grid" id="smGrid"></div>
+    </div>
+    <div>
+      <div class="cuda-panel">
+        <div class="cuda-panel-title">SM Utilization</div>
+        <div id="utilInfo"></div>
+      </div>
+      <div class="cuda-panel">
+        <div class="cuda-panel-title">L40S Specs</div>
+        <div style="font-size:10px;line-height:1.9;color:var(--dim)">
+          <div>SMs: <span style="color:var(--acc1)">142</span></div>
+          <div>CUDA Cores: <span style="color:var(--acc1)">18,176</span></div>
+          <div>Tensor Cores: <span style="color:var(--acc1)">568 (4th gen)</span></div>
+          <div>Memory: <span style="color:var(--acc1)">48 GB GDDR6</span></div>
+          <div>Bandwidth: <span style="color:var(--acc1)">864 GB/s</span></div>
+          <div>FP8 throughput: <span style="color:var(--acc1)">733 TFLOPS</span></div>
+          <div>MIG: <span style="color:var(--acc5)">unsupported</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">
+    Bigger models = more SMs needed concurrently. <strong>Nemotron 30B</strong> uses ~90% of SMs during prefill; <strong>Embedding 1B</strong> only needs ~35%. Idle SMs waste compute — which is why <strong>Triton's instance groups</strong> + <strong>continuous batching</strong> matter (next section).
+  </div>
+</section>
+
+<!-- §06 — REQUEST PATH -->
+<section id="s07" style="background:var(--surface)">
+  <div class="sec-label">07 — Single Request Path</div>
+  <div class="flow-row">
+    <div class="flow-node" id="fn0"><div class="flow-node-title">Client</div><div class="flow-node-sub">HTTP / gRPC</div></div>
+    <div class="flow-arrow" id="fa0">→</div>
+    <div class="flow-node" id="fn1"><div class="flow-node-title">Triton</div><div class="flow-node-sub">Frontend</div></div>
+    <div class="flow-arrow" id="fa1">→</div>
+    <div class="flow-node" id="fn2"><div class="flow-node-title">Scheduler</div><div class="flow-node-sub">Dynamic batch</div></div>
+    <div class="flow-arrow" id="fa2">→</div>
+    <div class="flow-node" id="fn3"><div class="flow-node-title">CUDA Stream</div><div class="flow-node-sub">Kernel queue</div></div>
+    <div class="flow-arrow" id="fa3">→</div>
+    <div class="flow-node" id="fn4"><div class="flow-node-title">SM Pool</div><div class="flow-node-sub">142 SMs</div></div>
+    <div class="flow-arrow" id="fa4">→</div>
+    <div class="flow-node" id="fn5"><div class="flow-node-title">Tensor Cores</div><div class="flow-node-sub">FP8 GEMM</div></div>
+    <div class="flow-arrow" id="fa5">→</div>
+    <div class="flow-node" id="fn6"><div class="flow-node-title">KV Cache</div><div class="flow-node-sub">Paged VRAM</div></div>
+    <div class="flow-arrow" id="fa6">→</div>
+    <div class="flow-node" id="fn7"><div class="flow-node-title">Tokens out</div><div class="flow-node-sub">SSE stream</div></div>
+  </div>
+</section>
+
+<!-- §07 — THE TWO LAYERS -->
+<section id="s08">
+  <div class="sec-label">08 — The Two Layers · Triton orchestrates, Hardware time-slices</div>
+
+  <p class="lead" style="margin-bottom:18px">Triton can't change physics. Without MIG, the L40S has <strong>one SM scheduler, one shared pool of 142 SMs, one VRAM address space</strong>. No matter how you configure Triton — instance groups, dynamic batching, priority — kernels from different models are still <em>time-sliced at the hardware level</em>. Triton optimizes <em>what's in the queue</em>; the hardware decides <em>when each thing in the queue runs</em>.</p>
+
+  <div class="two-layers">
+
+    <div class="layer-block sw-layer">
+      <div class="layer-stamp sw">SOFTWARE · TRITON</div>
+      <div class="layer-content">
+        <div>
+          <div class="layer-title">Orchestration</div>
+          <div class="layer-sub">Optimizes WHAT is queued and WHEN it dispatches</div>
+        </div>
+        <div class="layer-boxes">
+          <div class="layer-box sw-box">
+            <div class="layer-box-title">Routing</div>
+            <div class="layer-box-desc">/v2/models/{name}/infer → per-model scheduler</div>
+          </div>
+          <div class="layer-box sw-box">
+            <div class="layer-box-title">Dynamic batching</div>
+            <div class="layer-box-desc">Hold requests in batch window → dispatch as one call</div>
+          </div>
+          <div class="layer-box sw-box">
+            <div class="layer-box-title">Instance groups</div>
+            <div class="layer-box-desc">N copies per model · independent CUDA streams</div>
+          </div>
+          <div class="layer-box sw-box">
+            <div class="layer-box-title">Priority &amp; rate limit</div>
+            <div class="layer-box-desc">Per-model QPS caps, scheduling weights</div>
+          </div>
+          <div class="layer-box sw-box">
+            <div class="layer-box-title">Backend abstraction</div>
+            <div class="layer-box-desc">TensorRT-LLM, vLLM, ONNX, Python — one API</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layer-arrow">
+      <span class="arrow">▼</span> &nbsp; orchestrates &nbsp; <span class="arrow">▼</span>
+    </div>
+
+    <div class="layer-block hw-layer">
+      <div class="layer-stamp hw">HARDWARE · CUDA DRIVER + L40S</div>
+      <div class="layer-content">
+        <div>
+          <div class="layer-title">Time-Slicing</div>
+          <div class="layer-sub">Decides WHEN each queued kernel runs · cannot be bypassed without MIG</div>
+        </div>
+        <div class="layer-boxes">
+          <div class="layer-box hw-box">
+            <div class="layer-box-title">SM scheduler</div>
+            <div class="layer-box-desc">Grants the 142 SMs to one stream's kernels at a time</div>
+          </div>
+          <div class="layer-box hw-box">
+            <div class="layer-box-title">Stream priority</div>
+            <div class="layer-box-desc">High-priority streams jump the queue · driver enforces</div>
+          </div>
+          <div class="layer-box hw-box">
+            <div class="layer-box-title">Concurrent kernels</div>
+            <div class="layer-box-desc">If kernel A only uses 80 SMs, kernel B can take the other 62 — limited overlap</div>
+          </div>
+          <div class="layer-box hw-box">
+            <div class="layer-box-title">Context switch</div>
+            <div class="layer-box-desc">μs-scale switching between streams · zero hardware isolation</div>
+          </div>
+          <div class="layer-box hw-box">
+            <div class="layer-box-title">Shared VRAM</div>
+            <div class="layer-box-desc">Single address space · no per-model memory protection</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="annotation">
+    <strong>The takeaway for instance groups:</strong> 2 instances of Nemotron 30B don't <em>double</em> throughput — they typically yield 15-30% more, while doubling VRAM. The wins come from latency hiding (one instance does memory-bound decode while the other does compute-bound prefill) and from kernel-level concurrency on partial SM occupancy. Above 2-3 instances per model on a single L40S, you usually exhaust either VRAM or the SM scheduler's ability to interleave usefully.
+  </div>
+</section>
+
+<!-- §08 — TRITON ANIMATION -->
+<section id="s09" style="background:var(--surface)">
+  <div class="sec-label">09 — Triton Inference Server · Live Request Flow</div>
+  <div class="controls">
+    <button class="btn active" id="btnTPlay" onclick="toggleTriton()">⏸ Pause</button>
+    <button class="btn" onclick="boostTraffic()">🌊 Burst traffic</button>
+    <button class="btn" onclick="resetTriton()">↺ Reset</button>
+  </div>
+  <div class="triton-canvas-wrap">
+    <canvas id="tritonCanvas"></canvas>
+  </div>
+  <div class="triton-grid" id="tritonStats"></div>
+  <div class="annotation">
+    <strong>What you're seeing:</strong>
+    <br>① Colored dots = inference requests, color-coded per model. They arrive at random intervals from clients (top).
+    <br>② <strong>Triton Frontend</strong> (HTTP/gRPC) accepts each request and routes it by model name to the right per-model scheduler.
+    <br>③ <strong>Per-model schedulers</strong> hold requests in a <em>batch window</em> (dotted rectangle). When the queue hits <em>preferred_batch_size</em> OR the <em>max_queue_delay</em> timer expires, the scheduler dispatches the whole batch as one inference call — this is <strong>dynamic batching</strong>.
+    <br>④ <strong>Model instances</strong> (I0, I1, I2…) are independent copies of a model, each with its own CUDA stream <em>and its own VRAM allocation</em> (next section explains why).
+    <br>⑤ Batches dispatch to the <strong>L40S GPU</strong>. The SM scheduler still serializes kernel execution at the hardware level — pipelining hides much of that latency.
+    <br>⑥ Completed responses fan back out to clients (dots flying upward).
+    <br><br><strong>Try the burst button</strong> — watch how the schedulers fill batch windows faster, dispatching larger batches and pushing GPU utilization up.
+  </div>
+</section>
+
+<!-- §09 — WHY INSTANCE GROUPS DUPLICATE VRAM -->
+<section id="s10">
+  <div class="sec-label">10 — Why Instance Groups Duplicate VRAM</div>
+
+  <p class="lead">When you set <code style="color:var(--acc1);background:var(--panel);padding:2px 6px;border-radius:2px">instance_group { count: 2 }</code> in Triton, you're asking for two <em>independent execution contexts</em> of the same model. By default, that means <strong>everything is duplicated</strong> — including the model weights. Here's why, and what you can (and can't) share.</p>
+
+  <h4 style="font-family:'Syne',sans-serif;font-size:14px;color:#fff;margin:24px 0 12px">▸ What lives in VRAM for ONE inference engine instance</h4>
+
+  <div class="duplication-anatomy">
+    <div class="dup-row">
+      <div class="dup-component">Model weights<div class="desc">The trained parameters · read-only after load</div></div>
+      <div class="dup-explain">Nemotron 30B FP8 ≈ 16.5 GB · loaded into engine context at startup</div>
+      <div class="dup-status dup-yes">DUPLICATED</div>
+    </div>
+    <div class="dup-row">
+      <div class="dup-component">Workspace memory<div class="desc">Activation buffers, attention scores, intermediate tensors</div></div>
+      <div class="dup-explain">Scales with batch size · ~2-4 GB for 30B at batch=8 · cannot be shared (different in-flight data)</div>
+      <div class="dup-status dup-yes">DUPLICATED</div>
+    </div>
+    <div class="dup-row">
+      <div class="dup-component">KV cache pool<div class="desc">Per-request key/value tensors from attention</div></div>
+      <div class="dup-explain">Allocated per instance · paged blocks · scales with concurrent requests × seq length</div>
+      <div class="dup-status dup-yes">DUPLICATED</div>
+    </div>
+    <div class="dup-row">
+      <div class="dup-component">CUDA stream &amp; context<div class="desc">Kernel queue, stream-local state</div></div>
+      <div class="dup-explain">Each instance gets its own stream → its own queue · negligible memory but distinct</div>
+      <div class="dup-status dup-yes">DUPLICATED</div>
+    </div>
+    <div class="dup-row">
+      <div class="dup-component">CUDA runtime / driver<div class="desc">Shared across all instances on the GPU</div></div>
+      <div class="dup-explain">~1-2 GB overhead for the entire process · loaded once</div>
+      <div class="dup-status dup-no">SHARED</div>
+    </div>
+  </div>
+
+  <h4 style="font-family:'Syne',sans-serif;font-size:14px;color:#fff;margin:24px 0 12px">▸ The math · Nemotron 30B with different instance configurations</h4>
+
+  <div class="vram-scenarios">
+
+    <div class="vram-scenario scenario-good">
+      <h4>1 INSTANCE</h4>
+      <div class="h4-sub">Baseline · single CUDA stream</div>
+      <div class="vram-stack">
+        <div class="vram-block weight"><span>Weights (FP8)</span><span class="gb">16.5 GB</span></div>
+        <div class="vram-block workspace"><span>Workspace</span><span class="gb">2.5 GB</span></div>
+        <div class="vram-block kvcache"><span>KV cache pool</span><span class="gb">5.0 GB</span></div>
+      </div>
+      <div class="vram-total">
+        <span>VRAM used</span>
+        <span class="total-val total-good">24.0 GB</span>
+      </div>
+      <div class="scenario-note">
+        <strong>Throughput:</strong> baseline. <strong>Latency:</strong> queue-bound when concurrent requests arrive — they all funnel through one stream.
+      </div>
+    </div>
+
+    <div class="vram-scenario scenario-bad">
+      <h4>2 INSTANCES (default)</h4>
+      <div class="h4-sub">Triton's default behavior · everything duplicated</div>
+      <div class="vram-stack">
+        <div class="vram-block weight"><span>Weights × 2</span><span class="gb">33.0 GB</span></div>
+        <div class="vram-block dup-marker" style="justify-content:center"><span>↑ duplicated copy of identical bytes</span></div>
+        <div class="vram-block workspace"><span>Workspace × 2</span><span class="gb">5.0 GB</span></div>
+        <div class="vram-block kvcache"><span>KV cache × 2</span><span class="gb">10.0 GB</span></div>
+      </div>
+      <div class="vram-total">
+        <span>VRAM used</span>
+        <span class="total-val total-bad">48.0 GB ⚠</span>
+      </div>
+      <div class="scenario-note">
+        <strong>Throughput:</strong> +15-30% via latency hiding. <strong>Cost:</strong> nearly maxes out the L40S's 48 GB — <em>no room for other models</em>.
+      </div>
+    </div>
+
+    <div class="vram-scenario scenario-best">
+      <h4>2 INSTANCES + WEIGHT SHARING</h4>
+      <div class="h4-sub">Manual config · backend-dependent</div>
+      <div class="vram-stack">
+        <div class="vram-block shared"><span>Weights (shared)</span><span class="gb">16.5 GB</span></div>
+        <div class="vram-block workspace"><span>Workspace × 2</span><span class="gb">5.0 GB</span></div>
+        <div class="vram-block kvcache"><span>KV cache × 2</span><span class="gb">10.0 GB</span></div>
+      </div>
+      <div class="vram-total">
+        <span>VRAM used</span>
+        <span class="total-val total-good">31.5 GB</span>
+      </div>
+      <div class="scenario-note">
+        <strong>Saves:</strong> 16.5 GB. <strong>Catch:</strong> requires backend support (TensorRT-LLM with explicit shared engine, vLLM with prefix sharing patterns) and careful CUDA IPC setup.
+      </div>
+    </div>
+  </div>
+
+  <h4 style="font-family:'Syne',sans-serif;font-size:14px;color:#fff;margin:28px 0 12px">▸ Why weights aren't shared by default — the deeper reason</h4>
+
+  <p class="lead">Weights <em>are</em> read-only after loading, so theoretically they could be shared. The reason they aren't, by default, comes down to how inference engines are built:</p>
+
+  <p class="lead" style="margin-left:14px;font-size:11px">
+    ▸ <strong>Engine context bundles weights with state.</strong> A TensorRT-LLM engine (or vLLM model object) is a single C++/Python object that owns the weights, the workspace pointers, the CUDA graphs, and the runtime state — all in one unit. Triton creates two of these objects when you ask for two instances. Each calls <code style="color:var(--acc1)">cudaMalloc</code> for its own weight memory.<br><br>
+    ▸ <strong>CUDA memory pools are per-context.</strong> Each instance often gets its own memory allocator for performance isolation — fragmentation in one instance shouldn't affect the other. Sharing weights across allocators requires explicit IPC (Inter-Process Communication) handles.<br><br>
+    ▸ <strong>Engine baking optimizes per-context.</strong> TensorRT-LLM "bakes" weights into optimized kernels — sometimes reordering tensor layouts, fusing scale factors into weight values, or pre-computing transposes. Each baked engine wants its own physical copy of the (now-modified) weights.<br><br>
+    ▸ <strong>Sharing is opt-in, not automatic.</strong> Sharing requires you to: build the engine once, then explicitly construct multiple <em>execution contexts</em> against it (TensorRT terminology). The Triton config has to be aware of this pattern — it's not the default <code style="color:var(--acc1)">instance_group</code> behavior.
+  </p>
+
+  <div class="annotation">
+    <strong>Practical guidance for your L40S setup:</strong>
+    <br>• For <strong>large LLMs</strong> (the 30B), 1 instance + continuous batching (vLLM/TRT-LLM backend) almost always beats 2 instances. Continuous batching reuses the single weight copy across many concurrent requests at the decode-step level — much more efficient than spinning up a second engine.
+    <br>• For <strong>small models</strong> (the embedding 1B, reranker 4B), instance groups make sense — weights are cheap (1-4 GB each), so duplicating them costs little, and the throughput from parallel CUDA streams is real.
+    <br>• <strong>Mixing models is the win.</strong> One 30B (1 instance) + three embeddings + two rerankers gives you 5-6 concurrent streams and only ~30 GB total — leaves headroom for KV cache growth.
+    <br>• <strong>Weight sharing</strong> is worth exploring only when (a) the model is huge, (b) you genuinely need 2+ instances for latency hiding, and (c) your team has time to validate the more complex deployment pattern.
+  </div>
+</section>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  MODELS
+// ════════════════════════════════════════════════════════
+const MODELS = [
+  { id:'m1', name:'Nemotron-3 30B-A3B', short:'Nemotron 30B', vram:16.5, color:'#00d4ff', quant:'FP8',  smPct:0.90, instances:2, backend:'TensorRT-LLM', batchWindow:60, prefBatch:8 },
+  { id:'m2', name:'Nemotron-VL 12B',    short:'VL 12B',       vram:7.2,  color:'#a855f7', quant:'FP8',  smPct:0.70, instances:1, backend:'TensorRT-LLM', batchWindow:80, prefBatch:4 },
+  { id:'m3', name:'Embedding 1B',       short:'Embedding 1B', vram:1.2,  color:'#10b981', quant:'BF16', smPct:0.35, instances:3, backend:'ONNX',         batchWindow:25, prefBatch:32 },
+  { id:'m4', name:'Reranker 4B',        short:'Reranker 4B',  vram:4.0,  color:'#f59e0b', quant:'BF16', smPct:0.45, instances:2, backend:'ONNX',         batchWindow:40, prefBatch:16 },
+];
+const KV_GB = 10.2, SYS_GB = 2.4, TOTAL = 48;
+const FREE = TOTAL - MODELS.reduce((a,m)=>a+m.vram,0) - KV_GB - SYS_GB;
+
+// ════════════════════════════════════════════════════════
+//  §00 — SM PARTITIONS
+// ════════════════════════════════════════════════════════
+function buildSMPartitions(){
+  const parent = document.getElementById('smPartitions');
+  for(let idx=0; idx<4; idx++){
+    const p = document.createElement('div');
+    p.className = 'sm-partition';
+    p.innerHTML = `
+      <div class="sm-partition-title">PARTITION ${idx} · 1 WARP SCHEDULER</div>
+      <div class="core-row" id="cores-${idx}"></div>
+      <div class="tensor-core" id="tc-${idx}">TENSOR CORE</div>
+    `;
+    parent.appendChild(p);
+    const row = p.querySelector('.core-row');
+    for(let i=0;i<32;i++){
+      const c = document.createElement('div');
+      c.className = 'cuda-core';
+      row.appendChild(c);
+    }
+  }
+  setInterval(()=>{
+    for(let p=0;p<4;p++){
+      const cores = document.querySelectorAll(`#cores-${p} .cuda-core`);
+      cores.forEach(c=>{ c.classList.toggle('fire', Math.random() < 0.55); });
+      const tc = document.getElementById(`tc-${p}`);
+      if(tc) tc.classList.toggle('fire', Math.random() < 0.7);
+    }
+  }, 280);
+}
+
+// ════════════════════════════════════════════════════════
+//  §01 — KERNEL PIPELINE CANVAS
+// ════════════════════════════════════════════════════════
+const kCanvas = document.getElementById('kernelCanvas');
+const kctx = kCanvas.getContext('2d');
+let kdpr = window.devicePixelRatio || 1;
+let kW = 0, kH = 0;
+const kernels = [];
+const KERNEL_TYPES = [
+  { name:'embedding',     color:'#00d4ff', tensor:false, dur: 600 },
+  { name:'rms_norm',      color:'#00d4ff', tensor:false, dur: 400 },
+  { name:'qkv_proj',      color:'#a855f7', tensor:true,  dur: 1200 },
+  { name:'rope',          color:'#00d4ff', tensor:false, dur: 400 },
+  { name:'attention',     color:'#a855f7', tensor:true,  dur: 1500 },
+  { name:'softmax',       color:'#00d4ff', tensor:false, dur: 500 },
+  { name:'attn_out',      color:'#a855f7', tensor:true,  dur: 1000 },
+  { name:'rms_norm',      color:'#00d4ff', tensor:false, dur: 400 },
+  { name:'mlp_gate',      color:'#a855f7', tensor:true,  dur: 1100 },
+  { name:'mlp_up',        color:'#a855f7', tensor:true,  dur: 1100 },
+  { name:'silu',          color:'#00d4ff', tensor:false, dur: 500 },
+  { name:'mlp_down',      color:'#a855f7', tensor:true,  dur: 1100 },
+];
+let kSpawnInterval = 0;
+let kSpawnIdx = 0;
+
+function resizeKernelCanvas(){
+  const r = kCanvas.getBoundingClientRect();
+  kW = r.width;
+  kH = r.height;
+  kCanvas.width = kW * kdpr;
+  kCanvas.height = kH * kdpr;
+  kctx.setTransform(1,0,0,1,0,0);
+  kctx.scale(kdpr, kdpr);
+}
+
+function drawKernelStatic(){
+  kctx.clearRect(0,0,kW,kH);
+
+  // grid
+  kctx.strokeStyle = 'rgba(26,37,64,0.4)';
+  kctx.lineWidth = 0.5;
+  for(let x=0;x<kW;x+=30){
+    kctx.beginPath(); kctx.moveTo(x,0); kctx.lineTo(x,kH); kctx.stroke();
+  }
+
+  const queueY = 50;
+  const schedY = 130;
+  const smY = 220;
+
+  // Labels
+  kctx.fillStyle = '#5a7090';
+  kctx.font = '9px JetBrains Mono';
+  kctx.fillText('CUDA STREAM (kernel queue, FIFO)', 10, 20);
+  kctx.fillText('SM SCHEDULER', 10, 100);
+  kctx.fillText('SM POOL · 142 SMs', 10, 190);
+
+  // Queue line
+  kctx.strokeStyle = '#243050';
+  kctx.lineWidth = 1;
+  kctx.strokeRect(10, queueY-12, kW-20, 28);
+
+  // Scheduler box
+  kctx.fillStyle = '#0d1428';
+  kctx.strokeStyle = '#a855f7';
+  kctx.lineWidth = 1;
+  kctx.fillRect(10, schedY-15, kW-20, 30);
+  kctx.strokeRect(10, schedY-15, kW-20, 30);
+  kctx.fillStyle = '#a855f7';
+  kctx.font = 'bold 10px JetBrains Mono';
+  kctx.fillText('▸ DISPATCH', 18, schedY+4);
+
+  // SM grid (mini)
+  const smCols = 24;
+  const smRows = 4;
+  const smSize = Math.min((kW - 20) / smCols, 12);
+  for(let r=0;r<smRows;r++){
+    for(let c=0;c<smCols;c++){
+      const x = 10 + c*smSize;
+      const y = smY + r*smSize;
+      const fired = Math.random() < 0.5;
+      kctx.fillStyle = fired ? '#a855f744' : '#1a2540';
+      kctx.fillRect(x, y, smSize-1, smSize-1);
+    }
+  }
+
+  // SM lit blocks track active kernels in 'compute' stage
+  const compK = kernels.filter(k=>k.stage==='compute');
+  compK.forEach(k=>{
+    const baseSM = (k.smOffset || 0) % (smCols * smRows);
+    const fillCount = k.tensor ? 18 : 6;
+    for(let i=0;i<fillCount;i++){
+      const idx = (baseSM + i) % (smCols * smRows);
+      const r = Math.floor(idx/smCols);
+      const c = idx % smCols;
+      const x = 10 + c*smSize;
+      const y = smY + r*smSize;
+      kctx.fillStyle = k.color;
+      kctx.shadowColor = k.color;
+      kctx.shadowBlur = 4;
+      kctx.fillRect(x, y, smSize-1, smSize-1);
+      kctx.shadowBlur = 0;
+    }
+  });
+}
+
+function spawnKernel(dt){
+  kSpawnInterval += dt;
+  if(kSpawnInterval > 700){
+    kSpawnInterval = 0;
+    const t = KERNEL_TYPES[kSpawnIdx % KERNEL_TYPES.length];
+    kSpawnIdx++;
+    kernels.push({
+      ...t,
+      stage: 'queue',
+      x: -20, y: 50,
+      progress: 0,
+      smOffset: Math.floor(Math.random() * 96),
+    });
+  }
+}
+
+function updateKernels(dt){
+  const queueY = 50, schedY = 130, smY = 220;
+
+  for(let i=kernels.length-1;i>=0;i--){
+    const k = kernels[i];
+    if(k.stage === 'queue'){
+      k.x += dt * 0.12;
+      if(k.x > kW - 60){
+        k.stage = 'sched';
+        k.startY = k.y; k.tx = 30; k.ty = schedY;
+        k.progress = 0;
+      }
+    }
+    else if(k.stage === 'sched'){
+      k.progress += dt/300;
+      const p = Math.min(1, k.progress);
+      k.y = queueY + (schedY - queueY) * p;
+      if(p >= 1){
+        k.stage = 'dispatch';
+        k.progress = 0;
+      }
+    }
+    else if(k.stage === 'dispatch'){
+      k.progress += dt/250;
+      const p = Math.min(1, k.progress);
+      k.y = schedY + (smY - schedY) * p;
+      if(p >= 1){
+        k.stage = 'compute';
+        k.computeStart = performance.now();
+      }
+    }
+    else if(k.stage === 'compute'){
+      const elapsed = performance.now() - k.computeStart;
+      if(elapsed > k.dur){
+        kernels.splice(i,1);
+      }
+    }
+  }
+}
+
+function drawKernels(){
+  kernels.forEach(k=>{
+    if(k.stage === 'queue' || k.stage === 'sched' || k.stage === 'dispatch'){
+      // Draw kernel as rounded rect with label
+      const w = k.tensor ? 70 : 60, h = 22;
+      kctx.fillStyle = k.color;
+      kctx.shadowColor = k.color;
+      kctx.shadowBlur = 6;
+      kctx.fillRect(k.x, k.y - h/2, w, h);
+      kctx.shadowBlur = 0;
+      kctx.fillStyle = 'rgba(0,0,0,0.85)';
+      kctx.font = 'bold 9px JetBrains Mono';
+      kctx.fillText(k.name, k.x + 4, k.y + 3);
+    }
+  });
+}
+
+let lastKFrame = performance.now();
+function kernelLoop(){
+  const now = performance.now();
+  const dt = Math.min(50, now - lastKFrame);
+  lastKFrame = now;
+
+  spawnKernel(dt);
+  updateKernels(dt);
+
+  drawKernelStatic();
+  drawKernels();
+
+  requestAnimationFrame(kernelLoop);
+}
+
+// ════════════════════════════════════════════════════════
+//  §02 — TRANSFORMER LAYER
+// ════════════════════════════════════════════════════════
+const LAYER_OPS = [
+  { num:1,  name:'RMSNorm (input)',         unit:'cuda' },
+  { num:2,  name:'Q projection',            unit:'tensor' },
+  { num:3,  name:'K projection',            unit:'tensor' },
+  { num:4,  name:'V projection',            unit:'tensor' },
+  { num:5,  name:'RoPE rotation',           unit:'cuda' },
+  { num:6,  name:'Attention Q × Kᵀ',        unit:'tensor' },
+  { num:7,  name:'Softmax',                 unit:'cuda' },
+  { num:8,  name:'Attention × V',           unit:'tensor' },
+  { num:9,  name:'Output projection',       unit:'tensor' },
+  { num:10, name:'Residual add',            unit:'cuda' },
+  { num:11, name:'RMSNorm (post-attn)',     unit:'cuda' },
+  { num:12, name:'MLP Gate projection',     unit:'tensor' },
+  { num:13, name:'MLP Up projection',       unit:'tensor' },
+  { num:14, name:'SiLU activation',         unit:'cuda' },
+  { num:15, name:'MLP Down projection',     unit:'tensor' },
+  { num:16, name:'Residual add',            unit:'cuda' },
+];
+
+function buildLayer(){
+  const stack = document.getElementById('layerStack');
+  LAYER_OPS.forEach((op, idx)=>{
+    const div = document.createElement('div');
+    div.className = 'layer-op';
+    div.id = 'op-'+idx;
+    div.innerHTML = `
+      <div class="op-num">${op.num}</div>
+      <div class="op-name">${op.name}</div>
+      <div class="op-tag ${op.unit}">${op.unit==='cuda'?'CUDA':'TENSOR'}</div>
+    `;
+    stack.appendChild(div);
+  });
+
+  // Animate sequentially through ops
+  let curOp = 0;
+  setInterval(()=>{
+    LAYER_OPS.forEach((op, i)=>{
+      const el = document.getElementById('op-'+i);
+      if(!el) return;
+      el.classList.remove('fire-cuda', 'fire-tensor');
+      if(i === curOp){
+        el.classList.add(op.unit === 'cuda' ? 'fire-cuda' : 'fire-tensor');
+      }
+    });
+    curOp = (curOp + 1) % LAYER_OPS.length;
+  }, 450);
+}
+
+// ════════════════════════════════════════════════════════
+//  §03 — VRAM
+// ════════════════════════════════════════════════════════
+function buildVRAM(){
+  const bar = document.getElementById('vramBar');
+  const segs = [
+    ...MODELS.map(m=>({label:m.short.split(' ')[0], gb:m.vram, color:m.color, name:m.name})),
+    {label:'KV', gb:KV_GB, color:'#334155', name:'KV Cache (paged)'},
+    {label:'Sys', gb:SYS_GB, color:'#1e293b', name:'CUDA / Driver'},
+    {label:'Free', gb:FREE, color:'#0d1428', name:'Free headroom'},
+  ];
+  segs.forEach(s=>{
+    const pct=(s.gb/TOTAL*100).toFixed(1);
+    const el = document.createElement('div');
+    el.className='vram-seg';
+    el.style.width = pct+'%';
+    el.style.background = s.color;
+    if(s.label==='Free'){
+      el.style.background='repeating-linear-gradient(45deg,#0d1428,#0d1428 4px,#111827 4px,#111827 8px)';
+      el.style.border='1px dashed #1f2937';
+    }
+    el.innerHTML = pct>5 ? `<span>${s.label}<br>${s.gb.toFixed(1)}G</span>` : '';
+    el.title = `${s.name} — ${s.gb.toFixed(1)} GB (${pct}%)`;
+    bar.appendChild(el);
+  });
+
+  const leg = document.getElementById('vramLegend');
+  segs.forEach(s=>{
+    const item = document.createElement('div');
+    item.className='legend-item';
+    item.innerHTML = `<div class="legend-dot" style="background:${s.color}"></div><span>${s.name} — <strong>${s.gb.toFixed(1)} GB</strong></span>`;
+    leg.appendChild(item);
+  });
+
+  const stats = document.getElementById('vramStats');
+  const used = TOTAL - FREE;
+  [
+    {v:used.toFixed(1)+' GB', l:'IN USE', c:'#00d4ff'},
+    {v:FREE.toFixed(1)+' GB', l:'FREE', c:'#10b981'},
+    {v:Math.round(used/TOTAL*100)+'%', l:'UTILIZATION', c:'#f59e0b'},
+    {v:MODELS.length, l:'MODELS', c:'#a855f7'},
+  ].forEach(i=>{
+    const d=document.createElement('div');
+    d.className='vstat';
+    d.innerHTML=`<div class="vstat-val" style="color:${i.c}">${i.v}</div><div class="vstat-lbl">${i.l}</div>`;
+    stats.appendChild(d);
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  §04 — TIMELINE
+// ════════════════════════════════════════════════════════
+const SLOTS = 40;
+let tlPlaying = true, tlInterval = null, tlTick = 0;
+const schedule = [0,0,0,0,0, 1,1,1, 0,0, 2, 0,0, 3,3, 0,0,0, 1,1, 0,0, 2,2, 0,0,0,0, 3, 1,1,1, 0,0,0,0,0];
+
+function buildTL(){
+  const c = document.getElementById('tlContainer');
+  c.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.minWidth = '600px';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;padding-left:140px;margin-bottom:6px';
+  for(let i=0;i<SLOTS;i+=4){
+    const l = document.createElement('div');
+    l.style.cssText = `flex:0 0 ${4/SLOTS*100}%;font-size:9px;color:var(--dim)`;
+    l.textContent = 'T'+i;
+    hdr.appendChild(l);
+  }
+  wrap.appendChild(hdr);
+
+  for(let mi=0; mi<MODELS.length; mi++){
+    const m = MODELS[mi];
+    const row = document.createElement('div');
+    row.className = 'ts-row';
+    const name = document.createElement('div');
+    name.className = 'ts-name';
+    name.style.color = m.color;
+    name.innerHTML = `<div style="width:8px;height:8px;border-radius:50%;background:${m.color}"></div>${m.short}`;
+    row.appendChild(name);
+    const line = document.createElement('div');
+    line.className = 'ts-line';
+    for(let s=0;s<SLOTS;s++){
+      const slot = document.createElement('div');
+      slot.className='ts-slot';
+      slot.id=`tl-${mi}-${s}`;
+      line.appendChild(slot);
+    }
+    row.appendChild(line);
+    wrap.appendChild(row);
+  }
+  c.appendChild(wrap);
+}
+
+function startTL(){
+  if(tlInterval) clearInterval(tlInterval);
+  tlInterval = setInterval(()=>{
+    if(!tlPlaying) return;
+    const slot = tlTick % SLOTS;
+    const mi = schedule[tlTick % schedule.length];
+    for(let i=0; i<MODELS.length; i++){
+      const el = document.getElementById(`tl-${i}-${slot}`);
+      if(!el) continue;
+      if(i===mi){
+        el.style.background = MODELS[i].color;
+        el.style.boxShadow = `0 0 8px ${MODELS[i].color}88`;
+      } else {
+        el.style.background = '';
+        el.style.boxShadow = '';
+      }
+    }
+    tlTick++;
+  }, 130);
+}
+
+function toggleTL(){
+  tlPlaying = !tlPlaying;
+  const btn = document.getElementById('btnPlay');
+  btn.textContent = tlPlaying ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', tlPlaying);
+}
+function resetTL(){
+  tlTick = 0;
+  for(let mi=0;mi<MODELS.length;mi++)
+    for(let s=0;s<SLOTS;s++){
+      const el = document.getElementById(`tl-${mi}-${s}`);
+      if(el){ el.style.background=''; el.style.boxShadow=''; }
+    }
+}
+
+// ════════════════════════════════════════════════════════
+//  §05 — SM GRID
+// ════════════════════════════════════════════════════════
+const SM_COUNT = 142;
+let activeMi = 0, smInterval = null;
+
+function buildSMs(){
+  const g = document.getElementById('smGrid');
+  for(let i=0;i<SM_COUNT;i++){
+    const b = document.createElement('div');
+    b.className = 'sm-block';
+    b.id = 'sm-'+i;
+    b.title = 'SM '+i;
+    g.appendChild(b);
+  }
+  lightModel(0);
+}
+
+function lightModel(mi){
+  activeMi = mi;
+  ['btn-m0','btn-m1','btn-m2','btn-m3','btn-idle'].forEach((id,i)=>{
+    const el = document.getElementById(id);
+    if(el) el.classList.toggle('active', i === (mi === -1 ? 4 : mi));
+  });
+  if(smInterval) clearInterval(smInterval);
+
+  const blocks = document.querySelectorAll('.sm-block');
+  blocks.forEach(b=>{ b.className='sm-block'; });
+
+  if(mi === -1){
+    document.getElementById('utilInfo').innerHTML = '<div style="font-size:11px;color:var(--dim)">No active model</div>';
+    return;
+  }
+
+  const m = MODELS[mi];
+  const target = Math.round(m.smPct * SM_COUNT);
+  let active = new Set();
+  while(active.size < target) active.add(Math.floor(Math.random()*SM_COUNT));
+  blocks.forEach((b,i)=>{
+    if(active.has(i)) b.classList.add('fire-'+(mi+1));
+  });
+
+  document.getElementById('utilInfo').innerHTML = `
+    <div class="util-label"><span style="color:${m.color}">${m.short}</span><span>${Math.round(m.smPct*100)}%</span></div>
+    <div class="util-bar-wrap"><div class="util-bar" style="width:${m.smPct*100}%;background:${m.color}"></div></div>
+    <div style="font-size:10px;color:var(--dim);line-height:1.9">
+      <div>Active SMs: <span style="color:${m.color}">${target} / ${SM_COUNT}</span></div>
+      <div>Quant: <span style="color:${m.color}">${m.quant}</span></div>
+      <div>VRAM: <span style="color:${m.color}">${m.vram} GB</span></div>
+      <div>Backend: <span style="color:${m.color}">${m.backend}</span></div>
+    </div>`;
+
+  smInterval = setInterval(()=>{
+    const flips = Math.floor(Math.random()*5)+2;
+    for(let f=0;f<flips;f++){
+      const idx = Math.floor(Math.random()*SM_COUNT);
+      const b = document.getElementById('sm-'+idx);
+      if(!b) continue;
+      const wasActive = active.has(idx);
+      if(wasActive && Math.random()<0.35){
+        active.delete(idx);
+        b.className = 'sm-block';
+      } else if(!wasActive && Math.random()<0.35){
+        active.add(idx);
+        b.className = 'sm-block fire-'+(mi+1);
+      }
+    }
+  }, 280);
+}
+
+// ════════════════════════════════════════════════════════
+//  §06 — PIPELINE ANIMATION
+// ════════════════════════════════════════════════════════
+let plStep = 0;
+function animatePipe(){
+  setInterval(()=>{
+    for(let i=0;i<8;i++){
+      const node = document.getElementById('fn'+i);
+      const arrow = document.getElementById('fa'+i);
+      if(node) node.classList.toggle('lit', i===plStep);
+      if(arrow) arrow.classList.toggle('lit', i===plStep);
+    }
+    plStep = (plStep+1)%8;
+  }, 600);
+}
+
+// ════════════════════════════════════════════════════════
+//  §08 — TRITON CANVAS ANIMATION
+// ════════════════════════════════════════════════════════
+const tritonCanvas = document.getElementById('tritonCanvas');
+const tctx = tritonCanvas.getContext('2d');
+let tdpr = window.devicePixelRatio || 1;
+let cssW = 0, cssH = 0;
+
+function resizeCanvas(){
+  const r = tritonCanvas.getBoundingClientRect();
+  cssW = r.width;
+  cssH = r.height;
+  tritonCanvas.width = cssW * tdpr;
+  tritonCanvas.height = cssH * tdpr;
+  tctx.setTransform(1,0,0,1,0,0);
+  tctx.scale(tdpr, tdpr);
+}
+
+let tritonPlaying = true;
+let tritonRequests = [];
+let tritonStats = MODELS.map(()=>({served:0, batched:0, totalBatchSize:0}));
+let lastSpawn = 0;
+let trafficBoost = 0;
+
+const ARRIVAL_RATE = [0.5, 0.2, 0.7, 0.3];
+
+function getLayout(){
+  return {
+    W: cssW, H: cssH,
+    clientY: 30, frontendY: 95,
+    schedTop: 165, schedBot: 290,
+    instTop: 360, instBot: 420,
+    gpuTop: 490, gpuBot: 550,
+  };
+}
+
+function drawTritonStatic(){
+  const L = getLayout();
+  tctx.clearRect(0,0,L.W,L.H);
+
+  tctx.strokeStyle = 'rgba(26,37,64,0.4)';
+  tctx.lineWidth = 0.5;
+  for(let x=0;x<L.W;x+=40){
+    tctx.beginPath(); tctx.moveTo(x,0); tctx.lineTo(x,L.H); tctx.stroke();
+  }
+
+  tctx.fillStyle = 'rgba(90,112,144,0.7)';
+  tctx.font = '9px JetBrains Mono';
+  tctx.fillText('▼ CLIENTS  HTTP/gRPC requests arriving', 16, 16);
+
+  tctx.fillStyle = '#0d1428';
+  tctx.strokeStyle = '#243050';
+  tctx.lineWidth = 1;
+  tctx.fillRect(16, L.frontendY-22, L.W-32, 38);
+  tctx.strokeRect(16, L.frontendY-22, L.W-32, 38);
+  tctx.fillStyle = '#fff';
+  tctx.font = 'bold 11px JetBrains Mono';
+  tctx.fillText('TRITON FRONTEND', 28, L.frontendY-4);
+  tctx.fillStyle = '#5a7090';
+  tctx.font = '9px JetBrains Mono';
+  tctx.fillText(':8000 HTTP  ·  :8001 gRPC  ·  :8002 metrics', 28, L.frontendY+10);
+  tctx.textAlign = 'right';
+  tctx.fillText('routes /v2/models/{name}/infer →', L.W-28, L.frontendY+4);
+  tctx.textAlign = 'left';
+
+  tctx.fillStyle = 'rgba(90,112,144,0.7)';
+  tctx.font = '9px JetBrains Mono';
+  tctx.fillText('▼ PER-MODEL SCHEDULERS  ·  Dynamic batching window', 16, L.schedTop-6);
+
+  const colW = (L.W - 32) / MODELS.length;
+  MODELS.forEach((m, i)=>{
+    const x = 16 + i*colW + 6;
+    const cw = colW - 12;
+
+    tctx.fillStyle = '#0d1428';
+    tctx.strokeStyle = m.color + '88';
+    tctx.lineWidth = 1.5;
+    tctx.fillRect(x, L.schedTop, cw, L.schedBot - L.schedTop);
+    tctx.strokeRect(x, L.schedTop, cw, L.schedBot - L.schedTop);
+
+    tctx.fillStyle = m.color;
+    tctx.font = 'bold 10px JetBrains Mono';
+    tctx.fillText(m.short, x+8, L.schedTop+14);
+    tctx.fillStyle = '#5a7090';
+    tctx.font = '8px JetBrains Mono';
+    tctx.fillText(`${m.backend}  ·  win=${m.batchWindow}ms  ·  pref=${m.prefBatch}`, x+8, L.schedTop+26);
+
+    tctx.strokeStyle = m.color + '55';
+    tctx.setLineDash([3,3]);
+    tctx.lineWidth = 1;
+    tctx.strokeRect(x+8, L.schedTop+34, cw-16, L.schedBot - L.schedTop - 42);
+    tctx.setLineDash([]);
+    tctx.fillStyle = m.color + '88';
+    tctx.font = '8px JetBrains Mono';
+    tctx.fillText('BATCH WINDOW', x+12, L.schedTop+46);
+
+    tctx.strokeStyle = m.color + '33';
+    tctx.lineWidth = 1;
+    tctx.beginPath();
+    tctx.moveTo(x+cw/2, L.schedBot);
+    tctx.lineTo(x+cw/2, L.instTop);
+    tctx.stroke();
+  });
+
+  tctx.fillStyle = 'rgba(90,112,144,0.7)';
+  tctx.font = '9px JetBrains Mono';
+  tctx.fillText('▼ MODEL INSTANCES  ·  Each = 1 CUDA stream + own VRAM allocation', 16, L.instTop-6);
+
+  MODELS.forEach((m, i)=>{
+    const x = 16 + i*colW + 6;
+    const cw = colW - 12;
+    const instSpacing = (cw - 20) / m.instances;
+
+    for(let inst=0; inst<m.instances; inst++){
+      const ix = x + 10 + inst * instSpacing;
+      const iw = Math.min(instSpacing - 4, 28);
+      tctx.fillStyle = '#0d1428';
+      tctx.strokeStyle = m.color;
+      tctx.lineWidth = 1;
+      tctx.fillRect(ix, L.instTop, iw, L.instBot - L.instTop);
+      tctx.strokeRect(ix, L.instTop, iw, L.instBot - L.instTop);
+      tctx.fillStyle = m.color;
+      tctx.font = '8px JetBrains Mono';
+      tctx.fillText('I'+inst, ix+5, L.instTop+(L.instBot-L.instTop)/2+3);
+    }
+
+    tctx.strokeStyle = m.color + '22';
+    tctx.lineWidth = 1;
+    tctx.beginPath();
+    tctx.moveTo(x+cw/2, L.instBot);
+    tctx.lineTo(x+cw/2, L.gpuTop);
+    tctx.stroke();
+  });
+
+  const grad = tctx.createLinearGradient(16, L.gpuTop, L.W-32, L.gpuBot);
+  grad.addColorStop(0, '#0a1628');
+  grad.addColorStop(0.5, '#0f1b35');
+  grad.addColorStop(1, '#0a1628');
+  tctx.fillStyle = grad;
+  tctx.strokeStyle = '#00d4ff';
+  tctx.lineWidth = 1;
+  tctx.fillRect(16, L.gpuTop, L.W-32, L.gpuBot - L.gpuTop);
+  tctx.strokeRect(16, L.gpuTop, L.W-32, L.gpuBot - L.gpuTop);
+
+  tctx.fillStyle = '#00d4ff';
+  tctx.font = 'bold 11px JetBrains Mono';
+  tctx.fillText('NVIDIA L40S  ·  142 SM  ·  48 GB VRAM  ·  No MIG', 28, L.gpuTop+18);
+  tctx.fillStyle = '#5a7090';
+  tctx.font = '9px JetBrains Mono';
+  tctx.fillText('CUDA streams serialized at hardware level — pipelining hides much of the latency', 28, L.gpuTop+34);
+
+  const totalActive = tritonRequests.filter(r=>r.stage==='compute').length;
+  const utilPct = Math.min(1, totalActive / 8);
+  const barX = L.W - 200;
+  tctx.fillStyle = '#050810';
+  tctx.fillRect(barX, L.gpuTop+12, 170, 10);
+  tctx.fillStyle = '#00d4ff';
+  tctx.fillRect(barX, L.gpuTop+12, 170 * utilPct, 10);
+  tctx.fillStyle = '#5a7090';
+  tctx.font = '8px JetBrains Mono';
+  tctx.fillText(`SM UTIL ${Math.round(utilPct*100)}%`, barX, L.gpuTop+34);
+}
+
+function spawnRequests(dt){
+  const L = getLayout();
+  lastSpawn += dt;
+  const spawnInterval = trafficBoost > 0 ? 50 : 200;
+  if(lastSpawn > spawnInterval){
+    lastSpawn = 0;
+    if(trafficBoost > 0) trafficBoost--;
+    const total = ARRIVAL_RATE.reduce((a,b)=>a+b,0);
+    let r = Math.random()*total, mi = 0;
+    for(let i=0;i<ARRIVAL_RATE.length;i++){
+      r -= ARRIVAL_RATE[i];
+      if(r<=0){ mi = i; break; }
+    }
+    const m = MODELS[mi];
+    const colW = (L.W - 32) / MODELS.length;
+    const targetCol = 16 + mi*colW + colW/2;
+    tritonRequests.push({
+      mi, color: m.color,
+      cx: Math.random()*L.W*0.85 + L.W*0.075,
+      cy: L.clientY,
+      tx: targetCol, ty: L.frontendY-2,
+      stage: 'arrive',
+      progress: 0,
+    });
+  }
+}
+
+function easeOut(t){ return 1 - Math.pow(1-t, 2); }
+
+function updateRequests(dt){
+  const L = getLayout();
+  const colW = (L.W - 32) / MODELS.length;
+
+  for(let i=tritonRequests.length-1;i>=0;i--){
+    const r = tritonRequests[i];
+
+    if(r.stage === 'arrive'){
+      r.progress += dt/600;
+      const p = Math.min(1, r.progress);
+      if(!r.startX){ r.startX = r.cx; r.startY = r.cy; }
+      r.cx = r.startX + (r.tx - r.startX) * easeOut(p);
+      r.cy = r.startY + (r.ty - r.startY) * easeOut(p);
+      if(p >= 1){
+        r.stage = 'frontend';
+        r.progress = 0;
+        const x = 16 + r.mi*colW + 6;
+        r.startX = r.cx; r.startY = r.cy;
+        r.tx = x + colW/2;
+        r.ty = L.schedTop + 50 + Math.random()*60;
+      }
+    }
+    else if(r.stage === 'frontend'){
+      r.progress += dt/450;
+      const p = Math.min(1, r.progress);
+      r.cx = r.startX + (r.tx - r.startX) * easeOut(p);
+      r.cy = r.startY + (r.ty - r.startY) * easeOut(p);
+      if(p >= 1){
+        r.stage = 'scheduler';
+        r.enteredScheduler = performance.now();
+        const x = 16 + r.mi*colW + 6;
+        const cw = colW - 12;
+        r.cx = x + 12 + Math.random()*(cw - 24);
+        r.cy = L.schedTop + 50 + Math.random()*(L.schedBot - L.schedTop - 60);
+      }
+    }
+    else if(r.stage === 'scheduler'){
+      r.cx += (Math.random()-0.5)*0.4;
+      r.cy += (Math.random()-0.5)*0.4;
+    }
+    else if(r.stage === 'dispatch'){
+      r.progress += dt/350;
+      const p = Math.min(1, r.progress);
+      r.cx = r.startX + (r.tx - r.startX) * easeOut(p);
+      r.cy = r.startY + (r.ty - r.startY) * easeOut(p);
+      if(p >= 1){
+        r.stage = 'gpu';
+        r.progress = 0;
+        r.startX = r.cx; r.startY = r.cy;
+        r.tx = r.cx;
+        r.ty = L.gpuTop + 30;
+      }
+    }
+    else if(r.stage === 'gpu'){
+      r.progress += dt/280;
+      const p = Math.min(1, r.progress);
+      r.cx = r.startX + (r.tx - r.startX) * easeOut(p);
+      r.cy = r.startY + (r.ty - r.startY) * easeOut(p);
+      if(p >= 1){
+        r.stage = 'compute';
+        r.computeStart = performance.now();
+        r.computeDur = MODELS[r.mi].id === 'm3' ? 200 : (MODELS[r.mi].id === 'm1' ? 600 : 350);
+      }
+    }
+    else if(r.stage === 'compute'){
+      const elapsed = performance.now() - r.computeStart;
+      r.cy = L.gpuTop + 30 + Math.sin(elapsed/40) * 5;
+      if(elapsed > r.computeDur){
+        r.stage = 'response';
+        r.progress = 0;
+        r.startX = r.cx; r.startY = r.cy;
+        r.tx = r.cx + (Math.random()-0.5)*150;
+        r.ty = -20;
+      }
+    }
+    else if(r.stage === 'response'){
+      r.progress += dt/700;
+      const p = Math.min(1, r.progress);
+      r.cx = r.startX + (r.tx - r.startX) * p;
+      r.cy = r.startY + (r.ty - r.startY) * p;
+      if(p >= 1 || r.cy < -10){
+        tritonStats[r.mi].served++;
+        tritonRequests.splice(i,1);
+      }
+    }
+  }
+}
+
+function processBatching(){
+  const L = getLayout();
+  const colW = (L.W - 32) / MODELS.length;
+  const now = performance.now();
+
+  MODELS.forEach((m, mi)=>{
+    const queued = tritonRequests.filter(r=>r.mi===mi && r.stage==='scheduler');
+    if(queued.length === 0) return;
+    const oldest = Math.min(...queued.map(r=>r.enteredScheduler));
+    const waited = now - oldest;
+
+    if(queued.length >= m.prefBatch || waited > m.batchWindow*5){
+      tritonStats[mi].batched++;
+      tritonStats[mi].totalBatchSize += queued.length;
+
+      const x = 16 + mi*colW + 6;
+      const cw = colW - 12;
+      const instSpacing = (cw - 20) / m.instances;
+
+      queued.forEach((r, idx)=>{
+        r.stage = 'dispatch';
+        r.progress = 0;
+        r.startX = r.cx; r.startY = r.cy;
+        const inst = idx % m.instances;
+        const ix = x + 10 + inst * instSpacing + Math.min(instSpacing-4, 28)/2;
+        r.tx = ix;
+        r.ty = L.instTop + (L.instBot-L.instTop)/2;
+      });
+    }
+  });
+}
+
+function drawRequests(){
+  tritonRequests.forEach(r=>{
+    tctx.fillStyle = r.color;
+    tctx.shadowColor = r.color;
+    tctx.shadowBlur = 6;
+    tctx.beginPath();
+    tctx.arc(r.cx, r.cy, r.stage==='compute' ? 5 : 3.5, 0, Math.PI*2);
+    tctx.fill();
+    tctx.shadowBlur = 0;
+  });
+}
+
+let lastFrame = performance.now();
+function tritonLoop(){
+  const now = performance.now();
+  const dt = Math.min(50, now - lastFrame);
+  lastFrame = now;
+
+  if(tritonPlaying){
+    spawnRequests(dt);
+    updateRequests(dt);
+    processBatching();
+  }
+
+  drawTritonStatic();
+  drawRequests();
+
+  requestAnimationFrame(tritonLoop);
+}
+
+function toggleTriton(){
+  tritonPlaying = !tritonPlaying;
+  const btn = document.getElementById('btnTPlay');
+  btn.textContent = tritonPlaying ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', tritonPlaying);
+  if(tritonPlaying) lastFrame = performance.now();
+}
+function boostTraffic(){ trafficBoost = 60; }
+function resetTriton(){
+  tritonRequests = [];
+  tritonStats = MODELS.map(()=>({served:0, batched:0, totalBatchSize:0}));
+  updateTritonStats();
+}
+
+function buildTritonStats(){
+  const c = document.getElementById('tritonStats');
+  MODELS.forEach((m,i)=>{
+    const d = document.createElement('div');
+    d.className = 'triton-stat';
+    d.innerHTML = `
+      <div class="triton-stat-val" style="color:${m.color}" id="tval-${i}">0 · 0 · 0.0</div>
+      <div class="triton-stat-lbl">${m.short.toUpperCase()}<br><span style="opacity:0.6">SERVED · BATCHES · AVG SIZE</span></div>
+    `;
+    c.appendChild(d);
+  });
+}
+function updateTritonStats(){
+  MODELS.forEach((m,i)=>{
+    const el = document.getElementById('tval-'+i);
+    if(!el) return;
+    const s = tritonStats[i];
+    const avg = s.batched>0 ? (s.totalBatchSize/s.batched) : 0;
+    el.innerHTML = `${s.served} <span style="color:var(--dim);font-size:14px">·</span> ${s.batched} <span style="color:var(--dim);font-size:14px">·</span> ${avg.toFixed(1)}`;
+  });
+}
+setInterval(updateTritonStats, 400);
+
+// ════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════
+
+// §03 — MMA tile visualization
+let mmaPlaying = true;
+let mmaTick = 0;
+let mmaInterval = null;
+
+function buildMMAMatrices(){
+  const matA = document.getElementById('matA');
+  const matB = document.getElementById('matB');
+  const matD = document.getElementById('matD');
+  if(!matA || !matB || !matD) return;
+
+  // Matrix A: 16 rows × 32 cols
+  for(let r=0; r<16; r++)
+    for(let c=0; c<32; c++){
+      const d = document.createElement('div');
+      d.className = 'mcell cell-a';
+      d.id = `a-${r}-${c}`;
+      matA.appendChild(d);
+    }
+  // Matrix B: 32 rows × 8 cols
+  for(let r=0; r<32; r++)
+    for(let c=0; c<8; c++){
+      const d = document.createElement('div');
+      d.className = 'mcell cell-b';
+      d.id = `b-${r}-${c}`;
+      matB.appendChild(d);
+    }
+  // Matrix D: 16 rows × 8 cols
+  for(let r=0; r<16; r++)
+    for(let c=0; c<8; c++){
+      const d = document.createElement('div');
+      d.className = 'mcell cell-d';
+      d.id = `d-${r}-${c}`;
+      matD.appendChild(d);
+    }
+}
+
+function startMMAAnimation(){
+  if(mmaInterval) clearInterval(mmaInterval);
+  mmaInterval = setInterval(()=>{
+    if(!mmaPlaying) return;
+
+    // Clear previous highlights
+    document.querySelectorAll('.mcell.hot-row, .mcell.hot-col, .mcell.hot-out').forEach(el=>{
+      el.classList.remove('hot-row', 'hot-col', 'hot-out');
+    });
+
+    // Pick output cell (sweep over all 128)
+    const outIdx = mmaTick % 128;
+    const outR = Math.floor(outIdx / 8);
+    const outC = outIdx % 8;
+
+    // Light up entire row outR of A (32 cols)
+    for(let c=0; c<32; c++){
+      const el = document.getElementById(`a-${outR}-${c}`);
+      if(el) el.classList.add('hot-row');
+    }
+    // Light up entire col outC of B (32 rows)
+    for(let r=0; r<32; r++){
+      const el = document.getElementById(`b-${r}-${outC}`);
+      if(el) el.classList.add('hot-col');
+    }
+    // Light up the resulting output cell
+    const dEl = document.getElementById(`d-${outR}-${outC}`);
+    if(dEl) dEl.classList.add('hot-out');
+
+    mmaTick++;
+  }, 350);
+}
+
+function toggleMMA(){
+  mmaPlaying = !mmaPlaying;
+  const btn = document.getElementById('btnMMAPlay');
+  if(!btn) return;
+  btn.textContent = mmaPlaying ? '⏸ Pause animation' : '▶ Play animation';
+  btn.classList.toggle('active', mmaPlaying);
+}
+
+function resetMMA(){
+  mmaTick = 0;
+  document.querySelectorAll('.mcell.hot-row, .mcell.hot-col, .mcell.hot-out').forEach(el=>{
+    el.classList.remove('hot-row', 'hot-col', 'hot-out');
+  });
+}
+
+// §03 — Tile sweep for QKV projection
+function buildTileSweep(){
+  const sweep = document.getElementById('tileSweep');
+  if(!sweep) return;
+
+  // We can't render 3072 columns easily; use a scaled-down visual: 24 rows × 128 cols = 3072 cells
+  // Each cell = 1 of the 3072 output tiles
+  const ROWS = 24;
+  const COLS = 128;
+  sweep.style.gridTemplateColumns = `repeat(${COLS}, 6px)`;
+  sweep.style.gridTemplateRows = `repeat(${ROWS}, 6px)`;
+
+  for(let i=0; i<ROWS*COLS; i++){
+    const c = document.createElement('div');
+    c.className = 'tile-cell';
+    c.id = `tile-${i}`;
+    sweep.appendChild(c);
+  }
+
+  // Animated sweep
+  let pos = 0;
+  const TOTAL = ROWS * COLS;
+  const progressEl = document.getElementById('tileSweepProgress');
+
+  setInterval(()=>{
+    // Sweep multiple tiles per tick for visible motion
+    for(let k=0; k<8; k++){
+      const idx = pos % TOTAL;
+      const el = document.getElementById(`tile-${idx}`);
+      if(el){
+        // Remove 'active' from old position
+        el.classList.remove('active');
+        el.classList.add('filled');
+      }
+      // New active cell
+      const nextEl = document.getElementById(`tile-${(idx+1) % TOTAL}`);
+      if(nextEl) nextEl.classList.add('active');
+      pos++;
+    }
+
+    // Reset on full sweep
+    if(pos % TOTAL === 0){
+      setTimeout(()=>{
+        for(let i=0; i<TOTAL; i++){
+          const el = document.getElementById(`tile-${i}`);
+          if(el) el.classList.remove('filled', 'active');
+        }
+      }, 1000);
+    }
+
+    if(progressEl){
+      const tilesScaled = Math.floor((pos % TOTAL) * 3072 / TOTAL);
+      progressEl.textContent = `${tilesScaled.toLocaleString()} / 3,072 tiles`;
+    }
+  }, 50);
+}
+
+function boot(){
+  buildSMPartitions();
+  buildLayer();
+  buildMMAMatrices();
+  startMMAAnimation();
+  buildTileSweep();
+  buildVRAM();
+  buildTL();
+  startTL();
+  buildSMs();
+  animatePipe();
+  buildTritonStats();
+  resizeCanvas();
+  resizeKernelCanvas();
+  requestAnimationFrame(tritonLoop);
+  requestAnimationFrame(kernelLoop);
+}
+
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+window.addEventListener('resize', ()=>{
+  resizeCanvas();
+  resizeKernelCanvas();
+});
+</script>
+
+</body>
+</html>

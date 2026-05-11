@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 — my-learnings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* Inlined so the 404 renders correctly regardless of which path the
+       user typed (browser resolves relative URLs against that path). */
+    :root {
+      --bg: #050810; --text: #c8d8f0; --text-strong: #fff;
+      --dim: #5a7090; --acc-1: #00d4ff; --border: #1a2540;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex; flex-direction: column;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 20% 0%, rgba(0,212,255,0.04) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(168,85,247,0.05) 0%, transparent 60%);
+    }
+    header {
+      padding: 24px 40px; border-bottom: 1px solid var(--border);
+    }
+    .logo-top {
+      font-family: 'Syne', sans-serif; font-size: 11px;
+      letter-spacing: 0.25em; color: var(--acc-1); text-transform: uppercase;
+    }
+    .logo-main {
+      font-family: 'Syne', sans-serif; font-size: 22px;
+      font-weight: 800; color: var(--text-strong);
+    }
+    .logo-main span { color: var(--acc-1); }
+    main {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      text-align: center; padding: 60px 20px;
+    }
+    .code {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(72px, 14vw, 140px); font-weight: 800;
+      color: var(--acc-1); line-height: 1; letter-spacing: -0.02em;
+    }
+    h1 { font-family: 'Syne', sans-serif; font-size: 22px; color: var(--text-strong); }
+    p { color: var(--dim); font-size: 13px; max-width: 50ch; line-height: 1.6; }
+    .home-link {
+      margin-top: 14px; font-size: 11px; letter-spacing: 0.2em;
+      text-transform: uppercase; color: var(--acc-1);
+      border: 1px solid var(--acc-1); padding: 10px 18px;
+      border-radius: 2px; text-decoration: none;
+      transition: background 120ms ease;
+    }
+    .home-link:hover { background: rgba(0,212,255,0.08); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-top">my · learnings</div>
+    <div class="logo-main">notes <span>&</span> viz</div>
+  </header>
+
+  <main>
+    <div class="code">404</div>
+    <h1>Page not found</h1>
+    <p>The page you were looking for isn't here. It may have moved, or it may never have existed.</p>
+    <a class="home-link" id="home" href="/">← Back to home</a>
+  </main>
+
+  <script>
+    // Make "back to home" work whether this is a user site (username.github.io)
+    // or a project site (username.github.io/repo-name/).
+    (function () {
+      var parts = window.location.pathname.split('/').filter(Boolean);
+      // On *.github.io, project sites have the repo as the first path segment.
+      var host = window.location.hostname;
+      var isProject = /\.github\.io$/.test(host) && parts.length > 0;
+      var home = isProject ? '/' + parts[0] + '/' : '/';
+      document.getElementById('home').setAttribute('href', home);
+    })();
+  </script>
+</body>
+</html>

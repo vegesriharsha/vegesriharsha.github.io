@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>my-learnings — notes & visualizations</title>
+  <meta name="description" content="A running notebook of systems, ML infrastructure, and the visualizations I build to understand them." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/base.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="./" style="text-decoration:none">
+        <div class="logo-top">my · learnings</div>
+        <div class="logo-main">notes <span>&</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="./" class="active">Home</a>
+        <a href="#posts">Notes</a>
+        <a href="#viz">Visualizations</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <h1>Things I'm <span>learning</span>, in writing and pictures.</h1>
+        <p>
+          A working notebook of systems, ML infrastructure, and other curiosities — written
+          as short notes and the occasional interactive diagram. Built fast, refined slowly.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="posts">
+      <div class="container">
+        <div class="sec-label">01 · Notes</div>
+        <h2>Recent notes</h2>
+        <p class="section-intro">Short writings on what I'm currently working through.</p>
+        <div class="grid" id="posts-grid"></div>
+      </div>
+    </section>
+
+    <section class="section" id="viz">
+      <div class="container">
+        <div class="sec-label">02 · Visualizations</div>
+        <h2>Interactive diagrams</h2>
+        <p class="section-intro">Standalone pages that explain ideas visually.</p>
+        <div class="grid" id="viz-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>© <span id="year"></span> my-learnings · built static · no tracking</div>
+      <div><a href="https://github.com/" target="_blank" rel="noopener">source on github</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+  <script src="assets/js/posts.js"></script>
+</body>
+</html>

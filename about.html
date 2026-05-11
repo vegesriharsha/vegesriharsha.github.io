@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About — my-learnings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/base.css" />
+  <link rel="stylesheet" href="assets/css/post.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="./" style="text-decoration:none">
+        <div class="logo-top">my · learnings</div>
+        <div class="logo-main">notes <span>&</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="./">Home</a>
+        <a href="./#posts">Notes</a>
+        <a href="./#viz">Visualizations</a>
+        <a href="about.html" class="active">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="post">
+    <div class="container">
+      <header class="post-header">
+        <div class="post-meta">
+          <span class="tag">About</span>
+        </div>
+        <h1 class="post-title">About this site</h1>
+        <p class="post-subtitle">A small static site where I keep notes and visualizations of things I'm learning.</p>
+      </header>
+
+      <article class="post-body">
+        <p>
+          This is a learning notebook — a place to write things down so I actually understand
+          them, and to keep the interactive diagrams I build along the way.
+        </p>
+
+        <h2>What's here</h2>
+        <p>
+          <strong>Notes</strong> are short writings — closer to journal entries than blog posts.
+          They live in <code>posts/</code>.
+        </p>
+        <p>
+          <strong>Visualizations</strong> are self-contained HTML pages, often with a lot of
+          custom CSS and a little JavaScript. They live in <code>visualizations/</code>.
+        </p>
+
+        <h2>How it's built</h2>
+        <p>
+          Plain HTML, CSS, and JavaScript — no build step, no framework, no tracking.
+          Hosted on <a href="https://pages.github.com/" target="_blank" rel="noopener">GitHub Pages</a>.
+          A single <code>posts.js</code> manifest powers the home page so adding content is a
+          one-file edit.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+          Reach me via the email listed on my GitHub profile.
+        </p>
+      </article>
+
+      <nav class="post-nav">
+        <a href="./">← Back to home</a>
+        <a href="./#posts">Read the notes →</a>
+      </nav>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>© <span id="year"></span> my-learnings</div>
+      <div><a href="./">home</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>
