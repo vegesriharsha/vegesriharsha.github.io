@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIM + Triton Multi-Model GPU Sharing</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050810; --surface: #0a0f1e; --panel: #0d1428; --panel2: #111a30;
+    --border: #1a2540; --border2: #243050; --text: #c8d8f0; --dim: #5a7090;
+    --acc1: #00d4ff; --acc2: #a855f7; --acc3: #10b981; --acc4: #f59e0b;
+    --acc5: #ef4444; --acc6: #ec4899;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; overflow-x: hidden;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% 0%, rgba(0,212,255,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(168,85,247,0.05) 0%, transparent 60%);
+  }
+
+  header {
+    padding: 24px 40px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px;
+    background: linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%);
+  }
+  .logo { font-family: 'Syne', sans-serif; }
+  .logo-top { font-size: 11px; letter-spacing: 0.25em; color: var(--acc1); text-transform: uppercase; }
+  .logo-main { font-size: 22px; font-weight: 800; color: #fff; line-height: 1.1; }
+  .logo-main span { color: var(--acc1); }
+  .badge { font-size: 10px; letter-spacing: 0.15em; padding: 4px 10px; border: 1px solid var(--acc1); color: var(--acc1); border-radius: 2px; text-transform: uppercase; }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 40px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 10px; }
+  .toc a { color: var(--dim); text-decoration: none; padding: 4px 10px; border: 1px solid var(--border2); border-radius: 2px; transition: all 0.2s; letter-spacing: 0.05em; }
+  .toc a:hover { color: var(--acc1); border-color: var(--acc1); }
+
+  section { padding: 28px 40px; border-bottom: 1px solid var(--border); }
+  @media (max-width: 700px) { section { padding: 24px 20px; } header { padding: 20px; } .toc { padding: 14px 20px; } }
+
+  .sec-label {
+    font-size: 10px; letter-spacing: 0.2em; color: var(--dim);
+    text-transform: uppercase; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .sec-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  h3.section-h { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 12px; }
+  h4.sub-h { font-family: 'Syne', sans-serif; font-size: 14px; color: #fff; margin: 24px 0 10px; font-weight: 700; }
+  .lead { font-size: 12px; line-height: 1.8; color: var(--text); margin-bottom: 14px; }
+  .lead strong { color: var(--acc1); }
+  .lead em { color: var(--acc2); font-style: normal; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* CODE BLOCKS — adopted from upload, refit to spec palette */
+  pre.code { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 16px 18px; overflow-x: auto; margin: 12px 0; position: relative; font-size: 11.5px; line-height: 1.7; }
+  pre.code.py { border-left: 3px solid var(--acc1); }
+  pre.code.yaml { border-left: 3px solid var(--acc3); }
+  pre.code.sh { border-left: 3px solid var(--acc4); }
+  pre.code.ascii { border-left: 3px solid var(--border2); }
+  pre.code code { background: none; border: none; padding: 0; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+  .pre-label { position: absolute; top: 8px; right: 12px; font-size: 9px; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+  .kw { color: var(--acc2); }
+  .cm { color: var(--dim); font-style: italic; }
+  .st { color: var(--acc4); }
+  .fn { color: var(--acc1); }
+  .nm { color: var(--acc3); }
+  .y-key { color: var(--acc1); }
+  .y-val { color: var(--acc3); }
+  .y-str { color: var(--acc4); }
+  .y-cm { color: var(--dim); font-style: italic; }
+  .y-hd { color: var(--acc1); font-weight: 700; }
+  code.inline { background: var(--panel); color: var(--acc1); padding: 2px 6px; border-radius: 2px; font-size: 11px; border: 1px solid var(--border); }
+
+  /* ANNOTATION (the takeaway closer) */
+  .annotation { font-size: 11px; color: var(--dim); line-height: 1.7; background: var(--panel); border-left: 3px solid var(--acc1); padding: 12px 16px; border-radius: 0 4px 4px 0; margin-top: 16px; }
+  .annotation.warn { border-left-color: var(--acc5); }
+  .annotation.tip { border-left-color: var(--acc3); }
+  .annotation.imp { border-left-color: var(--acc4); }
+  .annotation strong { color: var(--text); }
+  .annotation em { color: var(--acc1); font-style: normal; }
+  .ann-label { font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 4px; color: var(--acc1); }
+  .annotation.warn .ann-label { color: var(--acc5); }
+  .annotation.tip .ann-label { color: var(--acc3); }
+  .annotation.imp .ann-label { color: var(--acc4); }
+
+  /* TABLES */
+  table.spec-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 11px; }
+  table.spec-table th { background: var(--panel); color: var(--acc1); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 9px 12px; text-align: left; border: 1px solid var(--border); }
+  table.spec-table td { padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; color: var(--text); }
+  table.spec-table tr:nth-child(even) td { background: rgba(255,255,255,0.01); }
+
+  /* FILE TREE */
+  .tree { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.85; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--border2); padding: 16px 20px; border-radius: 0 3px 3px 0; margin: 12px 0; white-space: pre; overflow-x: auto; }
+  .td { color: var(--acc1); }
+  .tf { color: var(--text); }
+  .tc { color: var(--dim); font-style: italic; }
+
+  /* PATTERN 4.7 — LAYER/ZONE BLOCK (for §00 NIM anatomy) */
+  .layer-stack {
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px;
+  }
+  .nim-layer { padding: 12px 14px; border-radius: 4px; border: 1px solid; display: grid; grid-template-columns: 180px 1fr; gap: 14px; align-items: center; transition: all 0.4s ease; }
+  .nim-layer.lit { transform: translateX(4px); }
+  .nim-layer .lname { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }
+  .nim-layer .ldesc { font-size: 10px; color: var(--dim); line-height: 1.6; }
+  .nim-layer.l-api { background: rgba(0,212,255,0.06); border-color: rgba(0,212,255,0.3); }
+  .nim-layer.l-api .lname { color: var(--acc1); }
+  .nim-layer.l-api.lit { border-color: var(--acc1); box-shadow: 0 0 14px rgba(0,212,255,0.4); }
+  .nim-layer.l-runtime { background: rgba(168,85,247,0.06); border-color: rgba(168,85,247,0.3); }
+  .nim-layer.l-runtime .lname { color: var(--acc2); }
+  .nim-layer.l-runtime.lit { border-color: var(--acc2); box-shadow: 0 0 14px rgba(168,85,247,0.4); }
+  .nim-layer.l-triton { background: rgba(16,185,129,0.06); border-color: rgba(16,185,129,0.3); }
+  .nim-layer.l-triton .lname { color: var(--acc3); }
+  .nim-layer.l-triton.lit { border-color: var(--acc3); box-shadow: 0 0 14px rgba(16,185,129,0.4); }
+  .nim-layer.l-engine { background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.3); }
+  .nim-layer.l-engine .lname { color: var(--acc4); }
+  .nim-layer.l-engine.lit { border-color: var(--acc4); box-shadow: 0 0 14px rgba(245,158,11,0.4); }
+  .nim-layer.l-gpu { background: rgba(236,72,153,0.06); border-color: rgba(236,72,153,0.3); }
+  .nim-layer.l-gpu .lname { color: var(--acc6); }
+  .nim-layer.l-gpu.lit { border-color: var(--acc6); box-shadow: 0 0 14px rgba(236,72,153,0.4); }
+  .layer-arrow { text-align: center; color: var(--dim); font-size: 16px; line-height: 1; padding: 2px 0; }
+
+  /* PATTERN 4.8 — COMPARISON SCENARIOS (for §01 sharing problem) */
+  .scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+  @media (max-width: 1100px) { .scenarios { grid-template-columns: 1fr; } }
+  .scenario { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .scenario.s-bad { border-color: var(--acc5); }
+  .scenario.s-warn { border-color: var(--acc4); }
+  .scenario.s-good { border-color: var(--acc3); }
+  .scenario h4 { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .scenario .s-sub { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; margin-bottom: 12px; text-transform: uppercase; }
+  .vram-stack { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; }
+  .v-block { padding: 7px 11px; border-radius: 3px; font-size: 10px; display: flex; justify-content: space-between; color: rgba(0,0,0,0.85); font-weight: 600; }
+  .v-block.tx { background: rgba(239,68,68,0.15); color: var(--acc5); border: 1px dashed var(--acc5); font-weight: 700; justify-content: center; }
+  .v-block.ok { background: rgba(16,185,129,0.15); color: var(--acc3); border: 1px dashed var(--acc3); font-weight: 700; justify-content: center; }
+  .v-block .gb { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 12px; }
+  .v-total { padding: 10px 12px; background: var(--bg); border-radius: 3px; font-size: 11px; color: var(--text); display: flex; justify-content: space-between; border-top: 2px solid var(--border2); }
+  .v-total .total-val { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 14px; }
+  .v-total .total-bad { color: var(--acc5); }
+  .v-total .total-warn { color: var(--acc4); }
+  .v-total .total-good { color: var(--acc3); }
+  .s-note { font-size: 10px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+  .s-note strong { color: var(--text); }
+
+  /* PATTERN 4.9 — FLOW CHAIN (steps, ensemble) */
+  .flow-row { display: flex; align-items: center; gap: 0; margin: 14px 0; overflow-x: auto; padding: 8px 0 12px; }
+  .flow-node { flex-shrink: 0; background: var(--panel); border: 1px solid var(--border2); border-radius: 4px; padding: 10px 14px; font-size: 10px; text-align: center; min-width: 130px; transition: all 0.4s ease; }
+  .flow-node-title { font-weight: 700; color: #fff; font-size: 11px; }
+  .flow-node-sub { color: var(--dim); margin-top: 2px; font-size: 9px; }
+  .flow-arrow { font-size: 18px; color: var(--dim); padding: 0 6px; flex-shrink: 0; transition: color 0.4s; }
+  .flow-node.lit { box-shadow: 0 0 14px var(--acc1); border-color: var(--acc1); transform: translateY(-2px); }
+  .flow-arrow.lit { color: var(--acc1); }
+
+  /* STEPS BLOCK (vertical numbered procedure) */
+  .steps { display: flex; flex-direction: column; gap: 0; margin: 14px 0; }
+  .step { display: flex; gap: 14px; position: relative; }
+  .step::before { content: ''; position: absolute; left: 14px; top: 32px; bottom: -4px; width: 1px; background: var(--border2); }
+  .step:last-child::before { display: none; }
+  .snum { width: 30px; height: 30px; border-radius: 50%; background: var(--panel); border: 1px solid var(--acc1); display: flex; align-items: center; justify-content: center; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 11px; color: var(--acc1); flex-shrink: 0; margin-top: 2px; transition: all 0.3s; }
+  .step.lit .snum { background: var(--acc1); color: #000; box-shadow: 0 0 14px var(--acc1); }
+  .sbody { padding-bottom: 20px; flex: 1; }
+  .sbody h5 { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: #fff; margin: 4px 0 5px; }
+  .sbody p { font-size: 11.5px; color: var(--dim); margin: 0; line-height: 1.7; }
+
+  /* PATTERN 4.2 — STACKED VRAM BAR */
+  .vram-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; margin: 14px 0; }
+  .vram-label { font-size: 10px; color: var(--dim); margin-bottom: 8px; letter-spacing: 0.1em; }
+  .vram-bar-outer { background: var(--bg); border-radius: 2px; height: 28px; overflow: hidden; display: flex; }
+  .vb { height: 28px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; transition: width 0.3s; color: rgba(0,0,0,0.85); position: relative; }
+  .vb::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 60%); pointer-events: none; }
+  .vram-legend { display: flex; gap: 14px; margin-top: 10px; flex-wrap: wrap; font-size: 10px; color: var(--text); }
+  .vl-item { display: flex; align-items: center; gap: 6px; }
+  .vl-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  /* PATTERN 4.3 — TIMELINE GRID (used in §01 sharing problem animation) */
+  .timeline-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; margin: 14px 0; }
+  .tl-row { display: flex; align-items: center; margin-bottom: 4px; }
+  .tl-name { width: 150px; flex-shrink: 0; font-size: 10px; padding-right: 10px; display: flex; align-items: center; gap: 6px; }
+  .tl-line { flex: 1; display: flex; gap: 2px; }
+  .tl-slot { flex: 1; height: 24px; border-radius: 2px; background: var(--bg); border: 1px solid var(--border); transition: background 0.15s, box-shadow 0.15s; }
+  .tl-slot.kill { background: var(--acc5); box-shadow: 0 0 6px var(--acc5); }
+
+  /* CONTROLS */
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; margin-top: 8px; }
+  .btn { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 7px 16px; border-radius: 3px; cursor: pointer; border: 1px solid var(--border2); background: var(--panel); color: var(--text); transition: all 0.2s ease; }
+  .btn:hover { border-color: var(--acc1); color: var(--acc1); }
+  .btn.active { background: var(--acc1); color: #000; border-color: var(--acc1); font-weight: 700; }
+
+  /* PATTERN 4.4 — CANVAS FLOW (for §06 ensemble pipeline) */
+  .canvas-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; position: relative; overflow: hidden; }
+  canvas.ensemble-canvas { display: block; width: 100%; height: 420px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-top">FHLB AI PLATFORM · DEPLOYMENT PLAYBOOK · L40S</div>
+    <div class="logo-main">Wrapping NIM with <span>Triton</span></div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="badge">Single GPU</span>
+    <span class="badge" style="border-color:var(--acc2);color:var(--acc2);">Two Models</span>
+    <span class="badge" style="border-color:var(--acc3);color:var(--acc3);">Multi-Model</span>
+    <span class="badge" style="border-color:var(--acc4);color:var(--acc4);">TRT-LLM</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#s00">00 · NIM Anatomy</a>
+  <a href="#s01">01 · Sharing Problem</a>
+  <a href="#s02">02 · Artifact Extraction</a>
+  <a href="#s03">03 · Model Repo Structure</a>
+  <a href="#s04">04 · Python Tokenizer Backend</a>
+  <a href="#s05">05 · TRT-LLM Engine Config</a>
+  <a href="#s06">06 · Ensemble Pipeline</a>
+  <a href="#s07">07 · Unified Triton Deploy</a>
+  <a href="#s08">08 · VRAM Verification</a>
+  <a href="#s09">09 · Spring AI Integration</a>
+</nav>
+
+<div style="padding:14px 40px;background:var(--panel);border-bottom:1px solid var(--border);font-size:11px;color:var(--dim);line-height:1.7">
+  <strong style="color:var(--acc1);letter-spacing:0.1em;font-size:10px;text-transform:uppercase">▸ Prerequisite reading</strong><br>
+  This is a <strong style="color:var(--text)">deployment playbook</strong>. It assumes you already understand SMs, CUDA streams, time-slicing, Tensor Cores, and the L40S VRAM layout from the <em style="color:var(--acc1);font-style:normal">GPU Multi-Model + Triton</em> doc. Where this doc references those concepts it links back rather than re-explaining. The focus here: <strong style="color:var(--text)">extracting NIM artifacts and wiring them into a unified Triton instance.</strong>
+</div>
+
+<!-- §00 — NIM ANATOMY -->
+<section id="s00">
+  <div class="sec-label">00 — NIM Container Anatomy</div>
+
+  <div class="two-col">
+    <div>
+      <h3 class="section-h">NIM is already Triton under the hood.</h3>
+      <p class="lead">A NIM container is an <em>opinionated packaging</em> of layers — the OpenAI-compatible REST API on top is the value-add, but the inference engine inside is the same Triton + TRT-LLM stack you'd assemble yourself. This is the key fact that makes "wrapping NIM with Triton" possible: you're not adding a layer, you're <strong>peeling off NIM's wrapper</strong> to reach the engine that was already there.</p>
+
+      <p class="lead">Each NIM ships with <strong>five layers</strong> stacked on the GPU. The diagram pulses through them top-to-bottom — only the bottom three (Triton, TRT-LLM, CUDA) are doing real inference work; the top two are NGC plumbing.</p>
+
+      <p class="lead">The layers you'll extract and reuse are layers 3–4 (Triton repo conventions + the compiled <em>rank0.engine</em>). Everything above gets replaced by your own unified Triton deployment.</p>
+    </div>
+
+    <div class="layer-stack">
+      <div class="nim-layer l-api" id="nl0">
+        <div><div class="lname">OpenAI REST API</div><div class="ldesc">/v1/embeddings · /v1/rerank · /health · /metrics</div></div>
+        <div style="font-size:10px;color:var(--dim);text-align:right">layer 1</div>
+      </div>
+      <div class="layer-arrow">▼</div>
+      <div class="nim-layer l-runtime" id="nl1">
+        <div><div class="lname">NIM Runtime</div><div class="ldesc">NGC auth · profile selection · request routing</div></div>
+        <div style="font-size:10px;color:var(--dim);text-align:right">layer 2</div>
+      </div>
+      <div class="layer-arrow">▼</div>
+      <div class="nim-layer l-triton" id="nl2">
+        <div><div class="lname">Triton Server</div><div class="ldesc">batching · model lifecycle · gRPC/HTTP protocol</div></div>
+        <div style="font-size:10px;color:var(--dim);text-align:right">layer 3</div>
+      </div>
+      <div class="layer-arrow">▼</div>
+      <div class="nim-layer l-engine" id="nl3">
+        <div><div class="lname">TRT-LLM Engine</div><div class="ldesc">rank0.engine · GPU-specific compiled kernels</div></div>
+        <div style="font-size:10px;color:var(--dim);text-align:right">layer 4</div>
+      </div>
+      <div class="layer-arrow">▼</div>
+      <div class="nim-layer l-gpu" id="nl4">
+        <div><div class="lname">CUDA / L40S GPU</div><div class="ldesc">/dev/nvidia* mounted into the container</div></div>
+        <div style="font-size:10px;color:var(--dim);text-align:right">layer 5</div>
+      </div>
+    </div>
+  </div>
+
+  <h4 class="sub-h">▸ Where artifacts live inside a NIM container</h4>
+
+  <div class="tree"><span class="td">/opt/nim/</span>
+<span class="tc">├── config/                       # NIM runtime config, profile definitions</span>
+<span class="tc">│   └── model_manifest.yaml</span>
+<span class="td">├── models/</span>                       <span class="tc"># model weights (downloaded from NGC)</span>
+<span class="tc">│   └── {model-name}/</span>
+<span class="tc">│       ├── config.json</span>
+<span class="tc">│       ├── tokenizer.json        # HuggingFace tokenizer ← KEY</span>
+<span class="tc">│       ├── tokenizer_config.json</span>
+<span class="tc">│       └── model.safetensors     # weights (before TRT compilation)</span>
+<span class="td">└── .cache/</span>                       <span class="tc"># compiled TRT-LLM engines (generated at startup)</span>
+<span class="tc">    └── trt-engines/</span>
+<span class="tc">        └── {profile-hash}/</span>
+<span class="td">            ├── rank0.engine</span>      <span class="tc"># ← the compiled TRT engine FILE (GPU-specific)</span>
+<span class="tc">            ├── config.json</span>
+<span class="tc">            └── model.cache</span>
+
+<span class="tc"># Triton model repository auto-generated by NIM at runtime</span>
+<span class="td">/tmp/nim-triton-models/</span>
+<span class="tc">├── preprocessing/                # Python tokenizer backend</span>
+<span class="tc">│   ├── config.pbtxt</span>
+<span class="tc">│   └── 1/model.py</span>
+<span class="tc">├── model/                        # TRT-LLM inference backend</span>
+<span class="tc">│   ├── config.pbtxt</span>
+<span class="tc">│   └── 1/ → symlink to .cache/trt-engines/</span>
+<span class="tc">└── ensemble/                     # Triton ensemble pipeline</span>
+<span class="tc">    └── config.pbtxt</span></div>
+
+  <h4 class="sub-h">▸ Files you need to extract</h4>
+
+  <table class="spec-table">
+    <tr><th>File</th><th>Source path (in NIM cache PVC)</th><th>Used for</th></tr>
+    <tr><td><code class="inline">rank0.engine</code></td><td><code class="inline">/opt/nim/.cache/trt-engines/{hash}/rank0.engine</code></td><td>The TRT-LLM compiled inference engine — the actual model</td></tr>
+    <tr><td><code class="inline">tokenizer.json</code></td><td><code class="inline">/opt/nim/models/{name}/tokenizer.json</code></td><td>HuggingFace tokenizer for the Python preprocessing backend</td></tr>
+    <tr><td><code class="inline">tokenizer_config.json</code></td><td><code class="inline">/opt/nim/models/{name}/tokenizer_config.json</code></td><td>Tokenizer config (padding, special tokens, etc.)</td></tr>
+    <tr><td><code class="inline">config.json</code></td><td><code class="inline">/opt/nim/.cache/trt-engines/{hash}/config.json</code></td><td>TRT-LLM engine metadata (tensor names, max sequence length)</td></tr>
+  </table>
+
+  <div class="annotation">
+    <div class="ann-label">▸ The key insight</div>
+    NIM generates a Triton model repository in <code class="inline">/tmp/nim-triton-models/</code> at runtime. The compiled TRT engine (<code class="inline">rank0.engine</code>) lives in the persistent cache at <code class="inline">/opt/nim/.cache/</code>. To run multiple NIM models in one Triton instance, you <strong>extract both the TRT engine and the tokenizer</strong> from each NIM's cache, then build a unified model repo from them. This is what §02 walks through.
+  </div>
+</section>
+<!-- §01 — THE SHARING PROBLEM -->
+<section id="s01" style="background:var(--surface)">
+  <div class="sec-label">01 — The Sharing Problem · K8s + CUDA failure modes</div>
+
+  <h3 class="section-h">Two NIM pods cannot safely share one L40S.</h3>
+  <p class="lead">The GPU-multimodel doc (§10) covered why <em>two instance groups of one model</em> duplicate VRAM in the same process. This section is the <strong>cross-process</strong> version of that problem: two NIM <em>pods</em> each booting their own CUDA context. The mechanism is identical — independent allocators, no shared view of VRAM — the failure mode is worse because Kubernetes adds a scheduling layer that doesn't understand CUDA.</p>
+
+  <p class="lead">The three scenarios below show what actually happens at the pod boundary.</p>
+
+  <div class="scenarios">
+
+    <div class="scenario s-bad">
+      <h4>SCENARIO A · no time-slicing</h4>
+      <div class="s-sub">Two NIM pods, vanilla GPU resource request</div>
+      <div class="vram-stack">
+        <div class="v-block" style="background:var(--acc1)"><span>nim-embedding pod</span><span class="gb">claims 1 GPU</span></div>
+        <div class="v-block" style="background:var(--acc4)"><span>nim-reranker pod</span><span class="gb">claims 1 GPU</span></div>
+        <div class="v-block tx"><span>K8s scheduler:</span><span>Pending forever</span></div>
+      </div>
+      <div class="v-total">
+        <span>Outcome</span>
+        <span class="total-val total-bad">FAIL</span>
+      </div>
+      <div class="s-note">
+        <strong>Why:</strong> Node advertises 1×L40S. NVIDIA device plugin treats GPUs as indivisible. Second pod stays Pending forever.
+      </div>
+    </div>
+
+    <div class="scenario s-warn">
+      <h4>SCENARIO B · time-slicing on</h4>
+      <div class="s-sub">Virtual GPU slots, both pods scheduled</div>
+      <div class="vram-stack">
+        <div class="v-block" style="background:var(--acc1)"><span>embed-NIM pre-alloc</span><span class="gb">~12 GB</span></div>
+        <div class="v-block" style="background:var(--acc4)"><span>rerank-NIM pre-alloc</span><span class="gb">~10 GB</span></div>
+        <div class="v-block" style="background:var(--acc5)"><span>embed-NIM KV grab</span><span class="gb">43 GB (90%)</span></div>
+        <div class="v-block tx"><span>rerank-NIM:</span><span>CUDA OOM kill</span></div>
+      </div>
+      <div class="v-total">
+        <span>Outcome</span>
+        <span class="total-val total-warn">RACE CONDITION</span>
+      </div>
+      <div class="s-note">
+        <strong>Why:</strong> Each pod's CUDA context pre-allocates against the full 48 GB independently. First-mover wins; second pod gets OOM-killed.
+      </div>
+    </div>
+
+    <div class="scenario s-good">
+      <h4>SCENARIO C · single Triton</h4>
+      <div class="s-sub">One pod, both engines loaded</div>
+      <div class="vram-stack">
+        <div class="v-block" style="background:var(--acc1)"><span>embed-engine</span><span class="gb">~1 GB</span></div>
+        <div class="v-block" style="background:var(--acc4)"><span>rerank-engine</span><span class="gb">~4 GB</span></div>
+        <div class="v-block" style="background:var(--acc3)"><span>Triton + Python</span><span class="gb">~2 GB</span></div>
+        <div class="v-block ok"><span>~41 GB free headroom</span><span></span></div>
+      </div>
+      <div class="v-total">
+        <span>Outcome</span>
+        <span class="total-val total-good">~7 GB / 48 GB</span>
+      </div>
+      <div class="s-note">
+        <strong>Why it works:</strong> One CUDA context, one allocator — see GPU doc §10 for the underlying mechanism.
+      </div>
+    </div>
+
+  </div>
+
+  <h4 class="sub-h">▸ Live: scenario B at the millisecond level</h4>
+
+  <div class="controls">
+    <button class="btn active" id="btnTLPlay" onclick="toggleTL()">⏸ Pause</button>
+    <button class="btn" onclick="resetTL()">↺ Reset</button>
+  </div>
+
+  <div class="timeline-wrap">
+    <div id="tlContainer" style="overflow-x:auto"></div>
+    <div style="font-size:10px;color:var(--dim);margin-top:10px;line-height:1.7">
+      The <span style="color:var(--acc1)">embedding NIM</span> dominates as it greedily pre-allocates KV cache;
+      the <span style="color:var(--acc4)">reranker NIM</span> gets <span style="color:var(--acc5)">OOM-killed</span> around T+800ms.
+      The bottom row shows the same hardware running scenario C — both workloads co-resident, no kills.
+    </div>
+  </div>
+
+  <div class="annotation warn">
+    <div class="ann-label">▸ The K8s-specific gotcha</div>
+    The pod-level failure mode adds a wrinkle the GPU doc didn't cover: <strong>Kubernetes time-slicing advertises virtual GPU slots without enforcing memory boundaries.</strong> The NVIDIA device plugin lies to the scheduler ("2 GPUs available") even though the underlying L40S is one physical card. Each pod's CUDA context then races for the same 48 GB. The fix isn't smarter K8s config — it's collapsing two pods into one Triton process so a single allocator owns the GPU.
+  </div>
+</section>
+
+<!-- §02 — ARTIFACT EXTRACTION -->
+<section id="s02">
+  <div class="sec-label">02 — Artifact Extraction · seeding the model PVC</div>
+
+  <h3 class="section-h">Run each NIM once to harvest its compiled engine.</h3>
+  <p class="lead">The extraction pattern uses a Kubernetes <strong>Job</strong> to run each NIM container <em>once</em> with its model cache PVC mounted. NIM authenticates to NGC, downloads weights, compiles the TRT engine for the exact GPU, and exits. After the job completes, the PVC contains everything needed — and you never run the full NIM container again.</p>
+
+  <h4 class="sub-h">▸ Five-step extraction procedure (animated)</h4>
+
+  <div class="controls">
+    <button class="btn active" id="btnStepsPlay" onclick="toggleSteps()">⏸ Pause</button>
+    <button class="btn" onclick="resetSteps()">↺ Reset</button>
+  </div>
+
+  <div class="steps">
+    <div class="step" id="step-0"><div class="snum">1</div><div class="sbody"><h5>Create the target model-repo PVC</h5><p>A single shared PVC that will hold the Triton model repository with artifacts from both NIMs. Use <em>block storage</em>, not NFS — TRT engines need fast random I/O for memory-mapped reads.</p></div></div>
+    <div class="step" id="step-1"><div class="snum">2</div><div class="sbody"><h5>Run NIM Embedding as a Job — compiles TRT engine to PVC</h5><p>NIM starts, authenticates to NGC, downloads weights, compiles the TRT engine for your exact GPU type, then exits. The compiled engine + tokenizer files remain on the PVC.</p></div></div>
+    <div class="step" id="step-2"><div class="snum">3</div><div class="sbody"><h5>Run NIM Reranker as a Job — same pattern</h5><p>Identical mechanics for the reranker. Each NIM Job writes to its own subdirectory on the shared PVC. The Job's <code class="inline">ttlSecondsAfterFinished</code> auto-cleans up the pod after success.</p></div></div>
+    <div class="step" id="step-3"><div class="snum">4</div><div class="sbody"><h5>Layout Job — organize into Triton model repo</h5><p>A small init job copies/symlinks the extracted artifacts into the Triton model repository directory structure and writes the <code class="inline">config.pbtxt</code> files for each pipeline component.</p></div></div>
+    <div class="step" id="step-4"><div class="snum">5</div><div class="sbody"><h5>Deploy Triton — reads the PVC, loads all models</h5><p>The main Triton deployment mounts the same PVC at <code class="inline">/model-repo</code>. All subsequent pod restarts skip extraction entirely — models load from PVC in ~60 seconds.</p></div></div>
+  </div>
+
+  <h4 class="sub-h">▸ NIM extraction Job — embedding model</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · job.yaml</span><code><span class="y-cm"># Job: run NIM embedding once to compile TRT engine onto PVC</span>
+<span class="y-key">apiVersion</span>: batch/v1
+<span class="y-key">kind</span>: Job
+<span class="y-key">metadata</span>:
+  <span class="y-key">name</span>: <span class="y-str">nim-extract-embedding</span>
+  <span class="y-key">namespace</span>: <span class="y-str">fhlb-ai-platform</span>
+<span class="y-key">spec</span>:
+  <span class="y-key">ttlSecondsAfterFinished</span>: <span class="y-val">600</span>   <span class="y-cm"># auto-cleanup</span>
+  <span class="y-key">template</span>:
+    <span class="y-key">spec</span>:
+      <span class="y-key">restartPolicy</span>: <span class="y-str">Never</span>
+      <span class="y-key">serviceAccountName</span>: <span class="y-str">nim-sa</span>
+      <span class="y-key">containers</span>:
+      - <span class="y-key">name</span>: <span class="y-str">nim-embedding-extractor</span>
+        <span class="y-key">image</span>: <span class="y-str">harbor.fhlbdm.internal/ai-platform/nim-nv-embedqa-e5-v5:1.5.0</span>
+        <span class="y-key">command</span>: [<span class="y-str">"/bin/sh"</span>, <span class="y-str">"-c"</span>]
+        <span class="y-key">args</span>:
+        - |
+          <span class="y-cm"># Let NIM start, compile the TRT engine, then exit cleanly</span>
+          nimserver &amp;
+          NIM_PID=$!
+          <span class="y-cm"># Wait for readiness (model compiled and loaded)</span>
+          until curl -sf http://localhost:8000/health/ready; do sleep 10; done
+          echo "NIM ready — TRT engine compiled"
+          <span class="y-cm"># Copy compiled artifacts to the shared model repo PVC</span>
+          mkdir -p /model-repo/nim-embedding/cache
+          mkdir -p /model-repo/nim-embedding/tokenizer
+          cp -r /opt/nim/.cache/trt-engines/ /model-repo/nim-embedding/cache/
+          cp /opt/nim/models/*/tokenizer*.json  /model-repo/nim-embedding/tokenizer/
+          cp /opt/nim/models/*/special_tokens_map.json /model-repo/nim-embedding/tokenizer/ 2>/dev/null || true
+          echo "Artifacts copied successfully"
+          find /model-repo/nim-embedding/cache -name "*.engine" -exec echo "Engine: {}" \;
+          kill $NIM_PID
+        <span class="y-key">env</span>:
+        - {<span class="y-key">name</span>: <span class="y-str">NGC_API_KEY</span>,        <span class="y-key">valueFrom</span>: {<span class="y-key">secretKeyRef</span>: {<span class="y-key">name</span>: <span class="y-str">nim-ngc-secret</span>, <span class="y-key">key</span>: <span class="y-str">NGC_API_KEY</span>}}}
+        - {<span class="y-key">name</span>: <span class="y-str">NIM_CACHE_PATH</span>,       <span class="y-key">value</span>: <span class="y-str">"/opt/nim/.cache"</span>}
+        - {<span class="y-key">name</span>: <span class="y-str">NIM_MAX_MODEL_LEN</span>,    <span class="y-key">value</span>: <span class="y-str">"512"</span>}
+        - {<span class="y-key">name</span>: <span class="y-str">NIM_MODEL_PROFILE</span>,    <span class="y-key">value</span>: <span class="y-str">"tp1-fp8"</span>}
+        <span class="y-key">resources</span>:
+          <span class="y-key">limits</span>: {<span class="y-key">nvidia.com/gpu</span>: <span class="y-str">"1"</span>, <span class="y-key">memory</span>: <span class="y-str">"16Gi"</span>, <span class="y-key">cpu</span>: <span class="y-str">"4"</span>}
+        <span class="y-key">volumeMounts</span>:
+        - {<span class="y-key">name</span>: <span class="y-str">model-repo</span>, <span class="y-key">mountPath</span>: <span class="y-str">/model-repo</span>}
+      <span class="y-key">nodeSelector</span>:
+        <span class="y-key">fhlb.com/gpu-role</span>: <span class="y-str">"small-models"</span>
+      <span class="y-key">volumes</span>:
+      - <span class="y-key">name</span>: <span class="y-str">model-repo</span>
+        <span class="y-key">persistentVolumeClaim</span>: {<span class="y-key">claimName</span>: <span class="y-str">triton-model-repo-pvc</span>}</code></pre>
+
+  <h4 class="sub-h">▸ Finding the engine after extraction</h4>
+
+  <pre class="code sh"><span class="pre-label">shell</span><code><span class="cm"># After the Job completes, inspect the PVC to find exact paths</span>
+oc exec -n fhlb-ai-platform -it &lt;any-pod-with-pvc&gt; -- \
+  find /model-repo -name "*.engine" -o -name "rank*.engine" | sort
+
+<span class="cm"># Expected output:</span>
+<span class="cm"># /model-repo/nim-embedding/cache/trt-engines/&lt;hash&gt;/rank0.engine</span>
+<span class="cm"># /model-repo/nim-reranker/cache/trt-engines/&lt;hash&gt;/rank0.engine</span>
+
+<span class="cm"># Also check the config.json to understand tensor names</span>
+oc exec -n fhlb-ai-platform -it &lt;pod&gt; -- \
+  cat /model-repo/nim-embedding/cache/trt-engines/&lt;hash&gt;/config.json | python3 -m json.tool</code></pre>
+
+  <div class="annotation imp">
+    <div class="ann-label">▸ Engine is GPU-specific</div>
+    The compiled <code class="inline">rank0.engine</code> is specific to the exact GPU model, CUDA version, and TRT version used during compilation. The Job MUST run on the same GPU node type (L40S) as the Triton deployment. <strong>If you migrate to different GPU hardware, re-run the extraction Jobs.</strong> Do not reuse engine files across A100 → L40S → H100; they will fail to load.
+  </div>
+</section>
+
+<!-- §03 — MODEL REPO STRUCTURE -->
+<section id="s03" style="background:var(--surface)">
+  <div class="sec-label">03 — Triton Model Repository Structure</div>
+
+  <h3 class="section-h">A three-part pipeline per model.</h3>
+  <p class="lead">A Triton model repository is a directory tree where each subdirectory is a named model. Triton uses a strict convention: <code class="inline">model_name/config.pbtxt</code> for the model definition, and <code class="inline">model_name/{version}/</code> for the versioned artifacts.</p>
+
+  <p class="lead">For each NIM model you build a <strong>three-part pipeline</strong>: <em>tokenizer</em> (Python backend) → <em>engine</em> (TRT-LLM backend) → <em>ensemble</em> (wires them together). The ensemble is what your client calls; Triton runs the internal stages.</p>
+
+  <div class="tree"><span class="td">/model-repo/triton-models/</span>              <span class="tc"># ← Triton's --model-repository path</span>
+│
+├── <span class="td">embed-tokenizer/</span>                     <span class="tc"># Step 1: text → token IDs</span>
+│   ├── config.pbtxt                     <span class="tc"># Python backend, input: string, output: int32 tensors</span>
+│   └── 1/
+│       └── <span class="tf">model.py</span>                   <span class="tc"># HuggingFace tokenizer code</span>
+│
+├── <span class="td">embed-engine/</span>                        <span class="tc"># Step 2: token IDs → raw embeddings</span>
+│   ├── config.pbtxt                     <span class="tc"># tensorrtllm backend, points to rank0.engine</span>
+│   └── 1/
+│       └── <span class="tf">rank0.engine</span>               <span class="tc"># ← symlink or copy from NIM extraction PVC</span>
+│
+├── <span class="td">embed-postprocess/</span>                   <span class="tc"># Step 3: normalize embedding vector</span>
+│   ├── config.pbtxt
+│   └── 1/
+│       └── <span class="tf">model.py</span>                   <span class="tc"># L2 normalize, return as float32</span>
+│
+├── <span class="td">embed-pipeline/</span>                      <span class="tc"># Ensemble: tokenizer → engine → postprocess</span>
+│   └── config.pbtxt                     <span class="tc"># no versioned artifacts — ensemble is config only</span>
+│
+├── <span class="td">rerank-tokenizer/</span>                    <span class="tc"># Step 1: (query, passage) pairs → token IDs</span>
+│   ├── config.pbtxt
+│   └── 1/
+│       └── <span class="tf">model.py</span>
+│
+├── <span class="td">rerank-engine/</span>                       <span class="tc"># Step 2: token IDs → relevance logits</span>
+│   ├── config.pbtxt
+│   └── 1/
+│       └── <span class="tf">rank0.engine</span>               <span class="tc"># ← reranker TRT engine</span>
+│
+└── <span class="td">rerank-pipeline/</span>                     <span class="tc"># Ensemble: tokenizer → engine → sigmoid score</span>
+    └── config.pbtxt</div>
+
+  <div class="annotation tip">
+    <div class="ann-label">▸ Version directories &amp; symlinks</div>
+    Triton requires model artifacts inside a numbered subdirectory — <code class="inline">1/</code>, <code class="inline">2/</code>, etc. Triton serves the highest-numbered version by default. <strong>You can symlink rather than copy</strong> large engine files: <code class="inline">ln -s /model-repo/nim-embedding/cache/trt-engines/&lt;hash&gt;/rank0.engine /model-repo/triton-models/embed-engine/1/rank0.engine</code> — this avoids duplicating 8–15 GB of engine data on the PVC.
+  </div>
+</section>
+<!-- §04 — PYTHON TOKENIZER BACKEND -->
+<section id="s04">
+  <div class="sec-label">04 — Python Tokenizer Backend</div>
+
+  <h3 class="section-h">The bridge between raw text and INT32 tensors.</h3>
+  <p class="lead">TRT-LLM engines expect <em>pre-tokenized integer tensors</em> — they don't accept raw strings. The Python backend is a Triton-hosted Python script that wraps the HuggingFace tokenizer, converts raw text to <strong>input_ids</strong> and <strong>attention_mask</strong> tensors, and feeds them to the TRT engine. Each model needs its own tokenizer backend because the tokenizer is model-specific.</p>
+
+  <h4 class="sub-h">▸ Embedding tokenizer · config.pbtxt</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · embed-tokenizer/config.pbtxt</span><code><span class="y-key">name</span>: <span class="y-str">"embed-tokenizer"</span>
+<span class="y-key">backend</span>: <span class="y-str">"python"</span>
+<span class="y-key">max_batch_size</span>: <span class="y-val">64</span>
+
+<span class="y-key">input</span> [
+  {
+    <span class="y-key">name</span>: <span class="y-str">"text"</span>
+    <span class="y-key">data_type</span>: <span class="y-str">TYPE_STRING</span>
+    <span class="y-key">dims</span>: [ 1 ]              <span class="y-cm"># one text string per sample</span>
+  }
+]
+<span class="y-key">output</span> [
+  {<span class="y-key">name</span>: <span class="y-str">"input_ids"</span>,      <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [ -1 ]},  <span class="y-cm"># dynamic seq len</span>
+  {<span class="y-key">name</span>: <span class="y-str">"attention_mask"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [ -1 ]},
+  {<span class="y-key">name</span>: <span class="y-str">"token_type_ids"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [ -1 ]}
+]
+
+<span class="y-key">parameters</span>: {
+  <span class="y-key">key</span>: <span class="y-str">"EXECUTION_ENV_PATH"</span>
+  <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"/model-repo/python_env"</span>}  <span class="y-cm"># conda env with transformers</span>
+}
+
+<span class="y-key">instance_group</span> [{ <span class="y-key">kind</span>: <span class="y-str">KIND_CPU</span>, <span class="y-key">count</span>: <span class="y-val">2</span> }]   <span class="y-cm"># tokenization is CPU work</span></code></pre>
+
+  <h4 class="sub-h">▸ Embedding tokenizer · model.py</h4>
+
+  <pre class="code py"><span class="pre-label">python · embed-tokenizer/1/model.py</span><code><span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">import</span> triton_python_backend_utils <span class="kw">as</span> pb_utils
+<span class="kw">from</span> transformers <span class="kw">import</span> AutoTokenizer
+
+
+<span class="kw">class</span> <span class="fn">TritonPythonModel</span>:
+    <span class="kw">def</span> <span class="fn">initialize</span>(self, args):
+        <span class="cm"># Load from the tokenizer files extracted from NIM</span>
+        tokenizer_path = <span class="st">"/model-repo/nim-embedding/tokenizer"</span>
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.max_length = <span class="nm">512</span>    <span class="cm"># must match NIM_MAX_MODEL_LEN used during extraction</span>
+
+    <span class="kw">def</span> <span class="fn">execute</span>(self, requests):
+        responses = []
+        <span class="kw">for</span> request <span class="kw">in</span> requests:
+            text_tensor = pb_utils.get_input_tensor_by_name(request, <span class="st">"text"</span>)
+            texts = [t[<span class="nm">0</span>].decode(<span class="st">"utf-8"</span>) <span class="kw">for</span> t <span class="kw">in</span> text_tensor.as_numpy()]
+
+            encoded = self.tokenizer(
+                texts,
+                padding=<span class="st">"max_length"</span>,
+                truncation=<span class="st">True</span>,
+                max_length=self.max_length,
+                return_tensors=<span class="st">"np"</span>,
+            )
+
+            input_ids      = pb_utils.Tensor(<span class="st">"input_ids"</span>,
+                               encoded[<span class="st">"input_ids"</span>].astype(np.int32))
+            attention_mask = pb_utils.Tensor(<span class="st">"attention_mask"</span>,
+                               encoded[<span class="st">"attention_mask"</span>].astype(np.int32))
+            token_type_ids = pb_utils.Tensor(<span class="st">"token_type_ids"</span>,
+                               encoded.get(<span class="st">"token_type_ids"</span>,
+                                 np.zeros_like(encoded[<span class="st">"input_ids"</span>])).astype(np.int32))
+
+            responses.append(pb_utils.InferenceResponse(
+                output_tensors=[input_ids, attention_mask, token_type_ids]
+            ))
+        <span class="kw">return</span> responses
+
+    <span class="kw">def</span> <span class="fn">finalize</span>(self): <span class="kw">pass</span></code></pre>
+
+  <h4 class="sub-h">▸ Reranker tokenizer · query + passage pairs</h4>
+
+  <p class="lead">The reranker takes <em>pairs</em> of (query, passage) — not single strings. The tokenizer must concatenate them with the separator token used during the model's training (typically <code class="inline">[SEP]</code> or <code class="inline">&lt;/s&gt;</code> for Mistral-based models).</p>
+
+  <pre class="code py"><span class="pre-label">python · rerank-tokenizer/1/model.py</span><code><span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">import</span> triton_python_backend_utils <span class="kw">as</span> pb_utils
+<span class="kw">from</span> transformers <span class="kw">import</span> AutoTokenizer
+
+
+<span class="kw">class</span> <span class="fn">TritonPythonModel</span>:
+    <span class="kw">def</span> <span class="fn">initialize</span>(self, args):
+        tokenizer_path = <span class="st">"/model-repo/nim-reranker/tokenizer"</span>
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.max_length = <span class="nm">2048</span>   <span class="cm"># reranker handles longer passages</span>
+
+    <span class="kw">def</span> <span class="fn">execute</span>(self, requests):
+        responses = []
+        <span class="kw">for</span> request <span class="kw">in</span> requests:
+            <span class="cm"># Reranker expects TWO inputs: query and passage (separate tensors)</span>
+            query_tensor   = pb_utils.get_input_tensor_by_name(request, <span class="st">"query"</span>)
+            passage_tensor = pb_utils.get_input_tensor_by_name(request, <span class="st">"passage"</span>)
+
+            queries  = [t[<span class="nm">0</span>].decode(<span class="st">"utf-8"</span>) <span class="kw">for</span> t <span class="kw">in</span> query_tensor.as_numpy()]
+            passages = [t[<span class="nm">0</span>].decode(<span class="st">"utf-8"</span>) <span class="kw">for</span> t <span class="kw">in</span> passage_tensor.as_numpy()]
+
+            <span class="cm"># NV-RerankQA-Mistral format: tokenize as a sequence pair</span>
+            encoded = self.tokenizer(
+                queries,
+                passages,
+                padding=<span class="st">"max_length"</span>,
+                truncation=<span class="st">"only_second"</span>,  <span class="cm"># truncate the passage, not the query</span>
+                max_length=self.max_length,
+                return_tensors=<span class="st">"np"</span>,
+            )
+
+            input_ids      = pb_utils.Tensor(<span class="st">"input_ids"</span>,
+                                 encoded[<span class="st">"input_ids"</span>].astype(np.int32))
+            attention_mask = pb_utils.Tensor(<span class="st">"attention_mask"</span>,
+                                 encoded[<span class="st">"attention_mask"</span>].astype(np.int32))
+
+            responses.append(pb_utils.InferenceResponse(
+                output_tensors=[input_ids, attention_mask]
+            ))
+        <span class="kw">return</span> responses</code></pre>
+
+  <div class="annotation warn">
+    <div class="ann-label">▸ Tokenizer pair format is model-specific</div>
+    The exact separator and format for query/passage pairs is determined by how NV-RerankQA-Mistral-4B was trained. Check the model card at NGC for the exact prompt format. Some rerankers use <code class="inline">"query: {q} document: {p}"</code>, others use native tokenizer pair encoding. <strong>The <code class="inline">tokenizer_config.json</code> extracted from NIM will contain the right settings — read it before writing your tokenizer backend.</strong>
+  </div>
+</section>
+
+<!-- §05 — TRT-LLM ENGINE CONFIG -->
+<section id="s05" style="background:var(--surface)">
+  <div class="sec-label">05 — TRT-LLM Engine Config (config.pbtxt)</div>
+
+  <h3 class="section-h">Tell Triton exactly what's inside rank0.engine.</h3>
+  <p class="lead">The <code class="inline">config.pbtxt</code> for the TRT engine backend tells Triton the <em>tensor names</em> (which must match exactly what TRT-LLM compiled into the engine), the data types, and the instance configuration. These names come from the <code class="inline">config.json</code> file extracted from the NIM cache — never guess them.</p>
+
+  <h4 class="sub-h">▸ Reading tensor names from the extracted engine</h4>
+
+  <pre class="code sh"><span class="pre-label">shell · inspect engine metadata</span><code><span class="cm"># Inspect the engine config.json to find actual tensor names</span>
+cat /model-repo/nim-embedding/cache/trt-engines/&lt;hash&gt;/config.json | \
+  python3 -c "
+import json, sys
+cfg = json.load(sys.stdin)
+print('=== INPUTS ===')
+for b in cfg.get('build_config', {}).get('plugin_config', {}): print(b)
+print()
+for k,v in cfg.items(): print(k, type(v).__name__)
+"
+
+<span class="cm"># Alternative: use trtexec to inspect the compiled engine directly</span>
+trtexec --loadEngine=/model-repo/nim-embedding/cache/trt-engines/&lt;hash&gt;/rank0.engine \
+        --dumpLayerInfo 2&gt;&amp;1 | grep -E "Input|Output" | head -30</code></pre>
+
+  <h4 class="sub-h">▸ Embedding engine · config.pbtxt</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · embed-engine/config.pbtxt</span><code><span class="y-cm"># TRT-LLM encoder backend for embedding model (NV-EmbedQA-E5-v5)</span>
+<span class="y-key">name</span>: <span class="y-str">"embed-engine"</span>
+<span class="y-key">backend</span>: <span class="y-str">"tensorrtllm"</span>
+<span class="y-key">max_batch_size</span>: <span class="y-val">64</span>
+
+<span class="y-cm"># Input tensors — names MUST match what was compiled into rank0.engine</span>
+<span class="y-key">input</span> [
+  {<span class="y-key">name</span>: <span class="y-str">"input_ids"</span>,      <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [-1]},
+  {<span class="y-key">name</span>: <span class="y-str">"attention_mask"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [-1]},
+  {<span class="y-key">name</span>: <span class="y-str">"token_type_ids"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [-1]}
+]
+
+<span class="y-cm"># Output tensor — the raw embedding vector (before normalization)</span>
+<span class="y-key">output</span> [
+  {
+    <span class="y-key">name</span>: <span class="y-str">"sentence_embedding"</span>  <span class="y-cm"># may be "pooler_output" — check config.json</span>
+    <span class="y-key">data_type</span>: <span class="y-str">TYPE_FP32</span>
+    <span class="y-key">dims</span>: [ <span class="y-val">1024</span> ]            <span class="y-cm"># NV-EmbedQA-E5-v5 output dim is 1024</span>
+  }
+]
+
+<span class="y-key">parameters</span>: {
+  <span class="y-key">key</span>: <span class="y-str">"gpt_model_type"</span>
+  <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"encoder"</span>}  <span class="y-cm"># encoder-only — no KV cache, no decoding loop</span>
+}
+<span class="y-key">parameters</span>: {
+  <span class="y-key">key</span>: <span class="y-str">"gpt_model_path"</span>
+  <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"/model-repo/triton-models/embed-engine/1"</span>}
+}
+<span class="y-key">parameters</span>: {
+  <span class="y-key">key</span>: <span class="y-str">"encoder_input_features_data_type"</span>
+  <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"TYPE_INT32"</span>}
+}
+
+<span class="y-key">instance_group</span> [{ <span class="y-key">kind</span>: <span class="y-str">KIND_GPU</span>, <span class="y-key">count</span>: <span class="y-val">1</span>, <span class="y-key">gpus</span>: [ <span class="y-val">0</span> ] }]</code></pre>
+
+  <h4 class="sub-h">▸ Reranker engine · config.pbtxt</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · rerank-engine/config.pbtxt</span><code><span class="y-cm"># TRT-LLM encoder backend for reranker (NV-RerankQA-Mistral-4B)</span>
+<span class="y-key">name</span>: <span class="y-str">"rerank-engine"</span>
+<span class="y-key">backend</span>: <span class="y-str">"tensorrtllm"</span>
+<span class="y-key">max_batch_size</span>: <span class="y-val">16</span>             <span class="y-cm"># fewer items per batch (longer sequences)</span>
+
+<span class="y-key">input</span> [
+  {<span class="y-key">name</span>: <span class="y-str">"input_ids"</span>,      <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [-1]},
+  {<span class="y-key">name</span>: <span class="y-str">"attention_mask"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_INT32</span>, <span class="y-key">dims</span>: [-1]}
+]
+
+<span class="y-cm"># Reranker outputs a single relevance logit per (query, passage) pair</span>
+<span class="y-key">output</span> [
+  {
+    <span class="y-key">name</span>: <span class="y-str">"logits"</span>           <span class="y-cm"># raw score before sigmoid</span>
+    <span class="y-key">data_type</span>: <span class="y-str">TYPE_FP32</span>
+    <span class="y-key">dims</span>: [ <span class="y-val">1</span> ]
+  }
+]
+
+<span class="y-key">parameters</span>: {<span class="y-key">key</span>: <span class="y-str">"gpt_model_type"</span>, <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"encoder"</span>}}
+<span class="y-key">parameters</span>: {<span class="y-key">key</span>: <span class="y-str">"gpt_model_path"</span>, <span class="y-key">value</span>: {<span class="y-key">string_value</span>: <span class="y-str">"/model-repo/triton-models/rerank-engine/1"</span>}}
+
+<span class="y-key">instance_group</span> [{ <span class="y-key">kind</span>: <span class="y-str">KIND_GPU</span>, <span class="y-key">count</span>: <span class="y-val">1</span>, <span class="y-key">gpus</span>: [ <span class="y-val">0</span> ] }]</code></pre>
+
+  <div class="annotation">
+    <div class="ann-label">▸ Output tensor name: verify before deploying</div>
+    The output tensor name (<code class="inline">sentence_embedding</code>, <code class="inline">pooler_output</code>, <code class="inline">logits</code>, <code class="inline">score</code>) depends on how the specific model was compiled into the TRT engine. Always check the actual engine's <code class="inline">config.json</code> to confirm. <strong>Using the wrong name causes Triton to throw a tensor shape mismatch error at startup.</strong> The safe approach: run the extraction job, read the config.json, then write the config.pbtxt.
+  </div>
+</section>
+
+<!-- §06 — ENSEMBLE PIPELINE -->
+<section id="s06">
+  <div class="sec-label">06 — Triton Ensemble Pipeline · live</div>
+
+  <h3 class="section-h">Chain models into one logical call.</h3>
+  <p class="lead">A Triton <strong>Ensemble</strong> chains multiple models into a single logical pipeline. It is <em>configuration-only</em> — no code, no versioned artifacts, just a <code class="inline">config.pbtxt</code> that wires outputs of one model to inputs of the next. From the client's perspective, you call the ensemble once with raw text; Triton internally executes tokenizer → engine → postprocess and returns the final result.</p>
+
+  <h4 class="sub-h">▸ Live: requests flowing through the embedding ensemble</h4>
+
+  <div class="controls">
+    <button class="btn active" id="btnEnsPlay" onclick="toggleEnsemble()">⏸ Pause</button>
+    <button class="btn" onclick="burstEnsemble()">🌊 Burst traffic</button>
+    <button class="btn" onclick="resetEnsemble()">↺ Reset</button>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="ensembleCanvas" class="ensemble-canvas"></canvas>
+  </div>
+
+  <div style="font-size:10px;color:var(--dim);margin-top:10px;line-height:1.7">
+    Each dot is one inference request entering the ensemble.
+    <span style="color:var(--acc1);font-weight:600">▸ embed-pipeline</span> (top): raw text → tokenizer → TRT engine → L2 normalize → 1024-d vector.
+    <span style="color:var(--acc4);font-weight:600">▸ rerank-pipeline</span> (bottom): (query, passage) pair → tokenizer → TRT engine → sigmoid → relevance score.
+    Dots glow brighter inside the two compute-heavy stages (tokenizer, TRT engine) to indicate where most of the work happens.
+    Both ensembles share the same Triton process and the same L40S — but each request traverses only its own pipeline.
+  </div>
+
+  <h4 class="sub-h">▸ Embedding ensemble · config.pbtxt</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · embed-pipeline/config.pbtxt</span><code><span class="y-cm"># NO version subdirectory needed — ensemble is config only</span>
+<span class="y-key">name</span>: <span class="y-str">"embed-pipeline"</span>
+<span class="y-key">platform</span>: <span class="y-str">"ensemble"</span>
+<span class="y-key">max_batch_size</span>: <span class="y-val">64</span>
+
+<span class="y-cm"># What the client sends in</span>
+<span class="y-key">input</span> [{ <span class="y-key">name</span>: <span class="y-str">"text"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_STRING</span>, <span class="y-key">dims</span>: [1] }]
+
+<span class="y-cm"># What the client gets back</span>
+<span class="y-key">output</span> [{ <span class="y-key">name</span>: <span class="y-str">"embedding"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_FP32</span>, <span class="y-key">dims</span>: [1024] }]
+
+<span class="y-key">ensemble_scheduling</span> {
+  <span class="y-key">step</span> [
+    <span class="y-cm"># Step 1: tokenizer (Python backend, CPU)</span>
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"embed-tokenizer"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"text"</span>           <span class="y-key">value</span>: <span class="y-str">"text"</span>           }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"input_ids"</span>     <span class="y-key">value</span>: <span class="y-str">"input_ids"</span>     }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"attention_mask"</span> <span class="y-key">value</span>: <span class="y-str">"attention_mask"</span> }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"token_type_ids"</span> <span class="y-key">value</span>: <span class="y-str">"token_type_ids"</span> }
+    },
+    <span class="y-cm"># Step 2: TRT engine (GPU)</span>
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"embed-engine"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"input_ids"</span>          <span class="y-key">value</span>: <span class="y-str">"input_ids"</span>          }
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"attention_mask"</span>     <span class="y-key">value</span>: <span class="y-str">"attention_mask"</span>     }
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"token_type_ids"</span>     <span class="y-key">value</span>: <span class="y-str">"token_type_ids"</span>     }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"sentence_embedding"</span> <span class="y-key">value</span>: <span class="y-str">"sentence_embedding"</span> }
+    },
+    <span class="y-cm"># Step 3: postprocess (L2 normalize, CPU)</span>
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"embed-postprocess"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"sentence_embedding"</span> <span class="y-key">value</span>: <span class="y-str">"sentence_embedding"</span> }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"embedding"</span>          <span class="y-key">value</span>: <span class="y-str">"embedding"</span>          }
+    }
+  ]
+}</code></pre>
+
+  <h4 class="sub-h">▸ Postprocess backend · L2 normalization</h4>
+
+  <pre class="code py"><span class="pre-label">python · embed-postprocess/1/model.py</span><code><span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">import</span> triton_python_backend_utils <span class="kw">as</span> pb_utils
+
+
+<span class="kw">class</span> <span class="fn">TritonPythonModel</span>:
+    <span class="kw">def</span> <span class="fn">initialize</span>(self, args): <span class="kw">pass</span>
+
+    <span class="kw">def</span> <span class="fn">execute</span>(self, requests):
+        responses = []
+        <span class="kw">for</span> request <span class="kw">in</span> requests:
+            raw = pb_utils.get_input_tensor_by_name(
+                      request, <span class="st">"sentence_embedding"</span>).as_numpy()
+
+            <span class="cm"># L2 normalize: embedding / ||embedding||₂</span>
+            <span class="cm"># Required for cosine similarity to work as a dot product in pgvector</span>
+            norms = np.linalg.norm(raw, axis=<span class="nm">1</span>, keepdims=<span class="st">True</span>)
+            norms = np.maximum(norms, <span class="nm">1e-12</span>)   <span class="cm"># avoid div-by-zero</span>
+            normalized = (raw / norms).astype(np.float32)
+
+            responses.append(pb_utils.InferenceResponse(
+                output_tensors=[pb_utils.Tensor(<span class="st">"embedding"</span>, normalized)]
+            ))
+        <span class="kw">return</span> responses</code></pre>
+
+  <h4 class="sub-h">▸ Reranker ensemble · config.pbtxt</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · rerank-pipeline/config.pbtxt</span><code><span class="y-key">name</span>: <span class="y-str">"rerank-pipeline"</span>
+<span class="y-key">platform</span>: <span class="y-str">"ensemble"</span>
+<span class="y-key">max_batch_size</span>: <span class="y-val">16</span>
+
+<span class="y-key">input</span> [
+  {<span class="y-key">name</span>: <span class="y-str">"query"</span>,   <span class="y-key">data_type</span>: <span class="y-str">TYPE_STRING</span>, <span class="y-key">dims</span>: [1]},
+  {<span class="y-key">name</span>: <span class="y-str">"passage"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_STRING</span>, <span class="y-key">dims</span>: [1]}
+]
+<span class="y-key">output</span> [{<span class="y-key">name</span>: <span class="y-str">"score"</span>, <span class="y-key">data_type</span>: <span class="y-str">TYPE_FP32</span>, <span class="y-key">dims</span>: [1]}]
+
+<span class="y-key">ensemble_scheduling</span> {
+  <span class="y-key">step</span> [
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"rerank-tokenizer"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"query"</span>,        <span class="y-key">value</span>: <span class="y-str">"query"</span>   }
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"passage"</span>,      <span class="y-key">value</span>: <span class="y-str">"passage"</span> }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"input_ids"</span>,    <span class="y-key">value</span>: <span class="y-str">"input_ids"</span>    }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"attention_mask"</span>,<span class="y-key">value</span>: <span class="y-str">"attention_mask"</span>}
+    },
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"rerank-engine"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"input_ids"</span>,    <span class="y-key">value</span>: <span class="y-str">"input_ids"</span>    }
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"attention_mask"</span>,<span class="y-key">value</span>: <span class="y-str">"attention_mask"</span>}
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"logits"</span>,       <span class="y-key">value</span>: <span class="y-str">"logits"</span>       }
+    },
+    <span class="y-cm"># Sigmoid scoring — raw logit → 0..1 relevance score</span>
+    {
+      <span class="y-key">model_name</span>: <span class="y-str">"rerank-sigmoid"</span>
+      <span class="y-key">model_version</span>: <span class="y-val">1</span>
+      <span class="y-key">input_map</span>  { <span class="y-key">key</span>: <span class="y-str">"logits"</span>, <span class="y-key">value</span>: <span class="y-str">"logits"</span> }
+      <span class="y-key">output_map</span> { <span class="y-key">key</span>: <span class="y-str">"score"</span>,  <span class="y-key">value</span>: <span class="y-str">"score"</span>  }
+    }
+  ]
+}</code></pre>
+
+  <div class="annotation tip">
+    <div class="ann-label">▸ Ensembles are free latency-wise</div>
+    Triton chains the steps in-process, in shared memory — there is <em>no network hop</em> between tokenizer and engine. The animation above visualizes the logical stages; in reality, output tensors of one step are passed by-reference to the next. The whole pipeline runs as one inference call from the client's perspective.
+  </div>
+</section>
+<!-- §07 — UNIFIED TRITON DEPLOY -->
+<section id="s07" style="background:var(--surface)">
+  <div class="sec-label">07 — Unified Triton Deployment</div>
+
+  <h3 class="section-h">One pod, one GPU claim, both pipelines.</h3>
+  <p class="lead">With the model repository built on the PVC, the Triton deployment is straightforward: a single Deployment, one container, one GPU resource limit. Both <em>embed-pipeline</em> and <em>rerank-pipeline</em> load at startup; restarts skip extraction entirely and re-load from PVC in roughly 60 seconds.</p>
+
+  <h4 class="sub-h">▸ Complete deployment YAML</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · triton-deployment.yaml</span><code><span class="y-hd">apiVersion</span>: apps/v1
+<span class="y-hd">kind</span>: Deployment
+<span class="y-hd">metadata</span>:
+  <span class="y-key">name</span>: <span class="y-str">triton-small-models</span>
+  <span class="y-key">namespace</span>: <span class="y-str">fhlb-ai-platform</span>
+  <span class="y-hd">labels</span>:
+    <span class="y-key">app</span>: <span class="y-str">triton-small-models</span>
+    <span class="y-key">fhlb.com/role</span>: <span class="y-str">inference-embedding-reranker</span>
+<span class="y-hd">spec</span>:
+  <span class="y-key">replicas</span>: <span class="y-val">1</span>
+  <span class="y-hd">selector</span>:
+    <span class="y-hd">matchLabels</span>: {<span class="y-key">app</span>: <span class="y-str">triton-small-models</span>}
+  <span class="y-hd">template</span>:
+    <span class="y-hd">metadata</span>:
+      <span class="y-hd">labels</span>: {<span class="y-key">app</span>: <span class="y-str">triton-small-models</span>}
+    <span class="y-hd">spec</span>:
+      <span class="y-key">serviceAccountName</span>: <span class="y-str">nim-sa</span>
+
+      <span class="y-cm"># Init container: symlink the extracted engines into the model repo</span>
+      <span class="y-hd">initContainers</span>:
+      - <span class="y-key">name</span>: <span class="y-str">setup-model-repo</span>
+        <span class="y-key">image</span>: <span class="y-str">harbor.fhlbdm.internal/ai-platform/alpine-utils:latest</span>
+        <span class="y-key">command</span>: [<span class="y-str">"/bin/sh"</span>, <span class="y-str">"-c"</span>]
+        <span class="y-key">args</span>:
+        - |
+          EMBED_ENGINE=$(find /model-repo/nim-embedding/cache -name "rank0.engine" | head -1)
+          RERANK_ENGINE=$(find /model-repo/nim-reranker/cache -name "rank0.engine" | head -1)
+          echo "Embedding engine: $EMBED_ENGINE"
+          echo "Reranker engine:  $RERANK_ENGINE"
+          mkdir -p /model-repo/triton-models/embed-engine/1
+          mkdir -p /model-repo/triton-models/rerank-engine/1
+          ln -sf "$EMBED_ENGINE"  /model-repo/triton-models/embed-engine/1/rank0.engine
+          ln -sf "$RERANK_ENGINE" /model-repo/triton-models/rerank-engine/1/rank0.engine
+          for f in embed-tokenizer rerank-tokenizer embed-pipeline rerank-pipeline \
+                   embed-engine rerank-engine embed-postprocess rerank-sigmoid; do
+            [ -f "/model-repo/triton-models/$f/config.pbtxt" ] && \
+              echo "OK: $f" || echo "MISSING: $f/config.pbtxt"
+          done
+        <span class="y-hd">volumeMounts</span>:
+        - {<span class="y-key">name</span>: <span class="y-str">model-repo</span>, <span class="y-key">mountPath</span>: <span class="y-str">/model-repo</span>}
+
+      <span class="y-hd">containers</span>:
+      - <span class="y-key">name</span>: <span class="y-str">triton</span>
+        <span class="y-key">image</span>: <span class="y-str">harbor.fhlbdm.internal/ai-platform/triton-server:24.11-trtllm</span>
+        <span class="y-hd">args</span>:
+        - <span class="y-str">tritonserver</span>
+        - <span class="y-str">--model-repository=/model-repo/triton-models</span>
+        - <span class="y-str">--model-control-mode=explicit</span>
+        - <span class="y-str">--load-model=embed-pipeline</span>   <span class="y-cm"># dependencies auto-load</span>
+        - <span class="y-str">--load-model=rerank-pipeline</span>
+        - <span class="y-str">--http-port=8000</span>
+        - <span class="y-str">--grpc-port=8001</span>
+        - <span class="y-str">--metrics-port=8002</span>
+        - <span class="y-str">--log-verbose=1</span>
+        <span class="y-hd">ports</span>:
+        - {<span class="y-key">containerPort</span>: <span class="y-val">8000</span>, <span class="y-key">name</span>: <span class="y-str">http</span>}
+        - {<span class="y-key">containerPort</span>: <span class="y-val">8001</span>, <span class="y-key">name</span>: <span class="y-str">grpc</span>}
+        - {<span class="y-key">containerPort</span>: <span class="y-val">8002</span>, <span class="y-key">name</span>: <span class="y-str">metrics</span>}
+        <span class="y-hd">resources</span>:
+          <span class="y-hd">limits</span>:
+            <span class="y-key">nvidia.com/gpu</span>: <span class="y-str">"1"</span>     <span class="y-cm"># ONE GPU — both engines share it</span>
+            <span class="y-key">memory</span>: <span class="y-str">"24Gi"</span>
+            <span class="y-key">cpu</span>: <span class="y-str">"8"</span>
+          <span class="y-hd">requests</span>:
+            <span class="y-key">nvidia.com/gpu</span>: <span class="y-str">"1"</span>
+            <span class="y-key">memory</span>: <span class="y-str">"16Gi"</span>
+            <span class="y-key">cpu</span>: <span class="y-str">"4"</span>
+        <span class="y-hd">env</span>:
+        - {<span class="y-key">name</span>: <span class="y-str">CUDA_VISIBLE_DEVICES</span>, <span class="y-key">value</span>: <span class="y-str">"0"</span>}
+        <span class="y-hd">volumeMounts</span>:
+        - {<span class="y-key">name</span>: <span class="y-str">model-repo</span>, <span class="y-key">mountPath</span>: <span class="y-str">/model-repo</span>}
+        <span class="y-hd">readinessProbe</span>:
+          <span class="y-hd">httpGet</span>: {<span class="y-key">path</span>: <span class="y-str">/v2/health/ready</span>, <span class="y-key">port</span>: <span class="y-val">8000</span>}
+          <span class="y-key">initialDelaySeconds</span>: <span class="y-val">60</span>
+          <span class="y-key">periodSeconds</span>: <span class="y-val">10</span>
+          <span class="y-key">failureThreshold</span>: <span class="y-val">18</span>   <span class="y-cm"># 3 mins for both models to load</span>
+        <span class="y-hd">livenessProbe</span>:
+          <span class="y-hd">httpGet</span>: {<span class="y-key">path</span>: <span class="y-str">/v2/health/live</span>, <span class="y-key">port</span>: <span class="y-val">8000</span>}
+          <span class="y-key">initialDelaySeconds</span>: <span class="y-val">30</span>
+          <span class="y-key">periodSeconds</span>: <span class="y-val">30</span>
+
+      <span class="y-hd">nodeSelector</span>:
+        <span class="y-key">fhlb.com/gpu-role</span>: <span class="y-str">"small-models"</span>
+      <span class="y-hd">tolerations</span>:
+      - {<span class="y-key">key</span>: <span class="y-str">nvidia.com/gpu</span>, <span class="y-key">operator</span>: <span class="y-str">Exists</span>, <span class="y-key">effect</span>: <span class="y-str">NoSchedule</span>}
+
+      <span class="y-hd">volumes</span>:
+      - <span class="y-key">name</span>: <span class="y-str">model-repo</span>
+        <span class="y-hd">persistentVolumeClaim</span>: {<span class="y-key">claimName</span>: <span class="y-str">triton-model-repo-pvc</span>}
+
+---
+<span class="y-hd">apiVersion</span>: v1
+<span class="y-hd">kind</span>: Service
+<span class="y-hd">metadata</span>:
+  <span class="y-key">name</span>: <span class="y-str">triton-small-models-svc</span>
+  <span class="y-key">namespace</span>: <span class="y-str">fhlb-ai-platform</span>
+<span class="y-hd">spec</span>:
+  <span class="y-hd">selector</span>: {<span class="y-key">app</span>: <span class="y-str">triton-small-models</span>}
+  <span class="y-hd">ports</span>:
+  - {<span class="y-key">name</span>: <span class="y-str">http</span>,    <span class="y-key">port</span>: <span class="y-val">8000</span>, <span class="y-key">targetPort</span>: <span class="y-val">8000</span>}
+  - {<span class="y-key">name</span>: <span class="y-str">grpc</span>,    <span class="y-key">port</span>: <span class="y-val">8001</span>, <span class="y-key">targetPort</span>: <span class="y-val">8001</span>}
+  - {<span class="y-key">name</span>: <span class="y-str">metrics</span>, <span class="y-key">port</span>: <span class="y-val">8002</span>, <span class="y-key">targetPort</span>: <span class="y-val">8002</span>}</code></pre>
+
+  <div class="annotation">
+    <div class="ann-label">▸ Restart behavior</div>
+    All artifacts live on the PVC, so pod restarts skip extraction entirely. Triton re-mmaps each <code class="inline">rank0.engine</code> from the symlinked location and re-loads its Python backends from disk. <strong>Cold-start time: ~60 seconds for both pipelines.</strong> The <code class="inline">readinessProbe</code> failure threshold of 18 (3 minutes) absorbs occasional slow loads — node memory pressure, PVC contention, or first-touch page-in.
+  </div>
+</section>
+
+<!-- §08 — VRAM VERIFICATION -->
+<section id="s08">
+  <div class="sec-label">08 — VRAM Verification &amp; Debugging</div>
+
+  <h3 class="section-h">Confirm both models loaded; debug when they don't.</h3>
+  <p class="lead">Once deployed, three checks confirm a healthy state: <strong>model readiness</strong> via the Triton control plane, <strong>VRAM accounting</strong> via nvidia-smi or DCGM, and <strong>end-to-end inference</strong> via the v2 API. The accounting numbers below match the small-models subset of the L40S allocation from the GPU doc §04.</p>
+
+  <h4 class="sub-h">▸ Expected VRAM after both models load</h4>
+
+  <div class="vram-wrap">
+    <div class="vram-label">GPU-1 VRAM (48 GB L40S) — Triton single pod, both models loaded</div>
+    <div class="vram-bar-outer">
+      <div class="vb" style="width:2.1%;background:var(--acc1)">emb</div>
+      <div class="vb" style="width:8.3%;background:var(--acc4)">rerank</div>
+      <div class="vb" style="width:4.2%;background:var(--acc3)">Triton+py</div>
+      <div class="vb" style="width:85.4%;background:repeating-linear-gradient(45deg,#0d1428,#0d1428 4px,#111827 4px,#111827 8px);border:1px dashed var(--border2)"></div>
+    </div>
+    <div class="vram-legend">
+      <div class="vl-item"><div class="vl-dot" style="background:var(--acc1)"></div>embed-engine ~1 GB</div>
+      <div class="vl-item"><div class="vl-dot" style="background:var(--acc4)"></div>rerank-engine ~4 GB</div>
+      <div class="vl-item"><div class="vl-dot" style="background:var(--acc3)"></div>Triton + Python ~2 GB</div>
+      <div class="vl-item"><div class="vl-dot" style="background:var(--border2)"></div>~41 GB free headroom</div>
+    </div>
+  </div>
+
+  <h4 class="sub-h">▸ Check all models loaded</h4>
+
+  <pre class="code sh"><span class="pre-label">shell</span><code><span class="cm"># List all models Triton knows about and their state</span>
+curl -s http://triton-small-models-svc:8000/v2/models | python3 -m json.tool
+
+<span class="cm"># Expected — every model in the pipeline appears as READY:</span>
+<span class="cm"># embed-tokenizer:    READY</span>
+<span class="cm"># embed-engine:       READY</span>
+<span class="cm"># embed-postprocess:  READY</span>
+<span class="cm"># embed-pipeline:     READY</span>
+<span class="cm"># rerank-tokenizer:   READY</span>
+<span class="cm"># rerank-engine:      READY</span>
+<span class="cm"># rerank-sigmoid:     READY</span>
+<span class="cm"># rerank-pipeline:    READY</span>
+
+<span class="cm"># Check a specific model's readiness</span>
+curl -s http://triton-small-models-svc:8000/v2/models/embed-pipeline/ready
+<span class="cm"># → HTTP 200 = ready</span></code></pre>
+
+  <h4 class="sub-h">▸ Live VRAM usage</h4>
+
+  <pre class="code sh"><span class="pre-label">shell</span><code><span class="cm"># Check VRAM from inside the Triton pod</span>
+oc exec -n fhlb-ai-platform -it &lt;triton-pod&gt; -- nvidia-smi --query-gpu=\
+  name,memory.used,memory.free,utilization.gpu \
+  --format=csv,noheader
+
+<span class="cm"># Expected output (both models loaded):</span>
+<span class="cm"># NVIDIA L40S, 6144 MiB, 41984 MiB, 5%</span>
+<span class="cm">#               ↑ ~6 GB used (embed ~1GB + rerank ~4GB + Triton overhead)</span>
+
+<span class="cm"># OR via DCGM Prometheus metric (external, non-intrusive):</span>
+curl -s http://dcgm-exporter.gpu-operator:9400/metrics | \
+  grep DCGM_FI_DEV_FB_USED</code></pre>
+
+  <h4 class="sub-h">▸ End-to-end inference test</h4>
+
+  <pre class="code sh"><span class="pre-label">shell · embedding test</span><code><span class="cm"># Test embedding pipeline (Triton v2 HTTP API)</span>
+curl -X POST http://triton-small-models-svc:8000/v2/models/embed-pipeline/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputs": [{
+      "name": "text",
+      "shape": [1, 1],
+      "datatype": "BYTES",
+      "data": ["FHLB examination document regarding AHP compliance"]
+    }]
+  }'
+
+<span class="cm"># Response — 1024-dim embedding vector:</span>
+<span class="cm"># {"outputs": [{"name": "embedding", "shape": [1, 1024], "datatype": "FP32", "data": [0.021, -0.084, ...]}]}</span>
+
+<span class="cm"># Test reranker pipeline</span>
+curl -X POST http://triton-small-models-svc:8000/v2/models/rerank-pipeline/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputs": [
+      {"name": "query",   "shape": [1,1], "datatype": "BYTES", "data": ["FHLB examination schedule"]},
+      {"name": "passage", "shape": [1,1], "datatype": "BYTES", "data": ["The FHFA examination team will arrive on Monday..."]}
+    ]
+  }'
+<span class="cm"># Response: {"outputs": [{"name": "score", "shape": [1, 1], "datatype": "FP32", "data": [0.87]}]}</span></code></pre>
+
+  <h4 class="sub-h">▸ Common startup failures</h4>
+
+  <table class="spec-table">
+    <tr><th>Error in Triton logs</th><th>Cause</th><th>Fix</th></tr>
+    <tr><td><code class="inline">Failed to load model: rank0.engine not found</code></td><td>Symlink broken or extraction Job didn't complete</td><td>Re-run extraction Job; check symlink target with <code class="inline">ls -la</code></td></tr>
+    <tr><td><code class="inline">Tensor name mismatch: expected 'input_ids' got 'inputs_ids'</code></td><td>Typo in config.pbtxt or engine compiled with different names</td><td>Read <code class="inline">config.json</code> from the engine, match exactly</td></tr>
+    <tr><td><code class="inline">Python backend failed to initialize</code></td><td>transformers not installed in Python env, or tokenizer path wrong</td><td>Check <code class="inline">EXECUTION_ENV_PATH</code>, verify tokenizer files exist at the path</td></tr>
+    <tr><td><code class="inline">CUDA out of memory</code></td><td>Both engines tried to allocate &gt;48 GB</td><td>Reduce <code class="inline">max_batch_size</code> in both engine configs</td></tr>
+    <tr><td><code class="inline">Model 'embed-engine' is not ready</code></td><td>TRT engine compiled for different GPU (A100 engine on L40S)</td><td>Re-run extraction Job on L40S node specifically</td></tr>
+  </table>
+
+  <div class="annotation imp">
+    <div class="ann-label">▸ The "is not ready" diagnostic chain</div>
+    When Triton reports a model "is not ready", check in this order: ① engine file exists at the symlink target, ② engine was compiled on the same GPU type, ③ tensor names in config.pbtxt match config.json from the engine, ④ Python backend's <code class="inline">EXECUTION_ENV_PATH</code> points to a real conda env with <code class="inline">transformers</code> installed, ⑤ <code class="inline">max_batch_size</code> in config.pbtxt is feasible given current VRAM headroom.
+  </div>
+</section>
+
+<!-- §09 — SPRING AI INTEGRATION -->
+<section id="s09" style="background:var(--surface)">
+  <div class="sec-label">09 — Spring AI Integration · keeping upstream code untouched</div>
+
+  <h3 class="section-h">Adapt at the bean boundary; everything above stays the same.</h3>
+  <p class="lead">Triton uses the Kserve v2 inference protocol, not the OpenAI embedding format. You need a small adapter layer in Spring Boot to translate between the Spring AI <code class="inline">EmbeddingModel</code> interface and the Triton v2 HTTP API. <strong>The key benefit: once this adapter is written, every component above it in the RAG pipeline is unchanged.</strong></p>
+
+  <h4 class="sub-h">▸ Custom Triton embedding client (Spring AI bean)</h4>
+
+  <pre class="code py"><span class="pre-label">java · TritonEmbeddingModel.java</span><code><span class="cm">// Spring AI EmbeddingModel adapter for Triton v2 protocol</span>
+@Component
+<span class="kw">public class</span> <span class="fn">TritonEmbeddingModel</span> <span class="kw">implements</span> EmbeddingModel {
+
+    <span class="kw">private final</span> RestClient restClient;
+    <span class="kw">private final</span> String tritonUrl;
+
+    <span class="kw">public</span> <span class="fn">TritonEmbeddingModel</span>(@Value(<span class="st">"${triton.base-url}"</span>) String tritonUrl) {
+        this.tritonUrl = tritonUrl;
+        this.restClient = RestClient.builder()
+            .baseUrl(tritonUrl)
+            .defaultHeader(<span class="st">"Content-Type"</span>, <span class="st">"application/json"</span>)
+            .build();
+    }
+
+    @Override
+    <span class="kw">public</span> EmbeddingResponse <span class="fn">call</span>(EmbeddingRequest request) {
+        List&lt;Embedding&gt; embeddings = request.getInstructions().stream()
+            .map(text -&gt; embedSingle(text.getText()))
+            .map(vector -&gt; <span class="kw">new</span> Embedding(vector, <span class="nm">0</span>))
+            .toList();
+        <span class="kw">return new</span> EmbeddingResponse(embeddings);
+    }
+
+    <span class="kw">private float</span>[] <span class="fn">embedSingle</span>(String text) {
+        <span class="cm">// Build Triton v2 inference request</span>
+        var requestBody = Map.of(
+            <span class="st">"inputs"</span>, List.of(Map.of(
+                <span class="st">"name"</span>,     <span class="st">"text"</span>,
+                <span class="st">"shape"</span>,    List.of(<span class="nm">1</span>, <span class="nm">1</span>),
+                <span class="st">"datatype"</span>, <span class="st">"BYTES"</span>,
+                <span class="st">"data"</span>,     List.of(text)
+            ))
+        );
+
+        var response = restClient.post()
+            .uri(<span class="st">"/v2/models/embed-pipeline/infer"</span>)
+            .body(requestBody)
+            .retrieve()
+            .body(<span class="kw">new</span> ParameterizedTypeReference&lt;Map&lt;String, Object&gt;&gt;() {});
+
+        <span class="cm">// Extract float[] from Triton response</span>
+        var outputs = (List&lt;Map&lt;?, ?&gt;&gt;) response.get(<span class="st">"outputs"</span>);
+        var data = (List&lt;Double&gt;) outputs.get(<span class="nm">0</span>).get(<span class="st">"data"</span>);
+        <span class="kw">float</span>[] vector = <span class="kw">new float</span>[data.size()];
+        <span class="kw">for</span> (<span class="kw">int</span> i = <span class="nm">0</span>; i &lt; data.size(); i++) vector[i] = data.get(i).floatValue();
+        <span class="kw">return</span> vector;
+    }
+}</code></pre>
+
+  <h4 class="sub-h">▸ application.yaml</h4>
+
+  <pre class="code yaml"><span class="pre-label">yaml · application.yaml</span><code><span class="y-cm"># Spring Boot — point to Triton instead of NIM embedding</span>
+<span class="y-hd">triton</span>:
+  <span class="y-key">base-url</span>: <span class="y-str">http://triton-small-models-svc.fhlb-ai-platform.svc.cluster.local:8000</span>
+
+<span class="y-hd">spring</span>:
+  <span class="y-hd">ai</span>:
+    <span class="y-hd">vectorstore</span>:
+      <span class="y-hd">pgvector</span>:
+        <span class="y-key">dimensions</span>: <span class="y-val">1024</span>   <span class="y-cm"># NV-EmbedQA-E5-v5 output dimension</span>
+        <span class="y-key">distance-type</span>: <span class="y-str">COSINE_DISTANCE</span>
+        <span class="y-cm"># Normalized embeddings from L2 postprocess step → cosine = dot product</span></code></pre>
+
+  <h4 class="sub-h">▸ Reranker in Spring AI RAG Advisor</h4>
+
+  <pre class="code py"><span class="pre-label">java · TritonReranker.java</span><code><span class="cm">// Wraps Triton rerank-pipeline for Spring AI RAG</span>
+@Component
+<span class="kw">public class</span> <span class="fn">TritonReranker</span> {
+
+    <span class="kw">private final</span> RestClient restClient;
+
+    <span class="cm">/**
+     * Re-ranks retrieved documents by relevance to the query.
+     * Calls rerank-pipeline on Triton for each (query, passage) pair.
+     */</span>
+    <span class="kw">public</span> List&lt;Document&gt; <span class="fn">rerank</span>(String query, List&lt;Document&gt; candidates) {
+        <span class="kw">return</span> candidates.stream()
+            .map(doc -&gt; {
+                double score = rerankSingle(query, doc.getContent());
+                <span class="kw">return</span> Map.entry(doc, score);
+            })
+            .sorted(Map.Entry.&lt;Document, Double&gt;comparingByValue().reversed())
+            .map(Map.Entry::getKey)
+            .limit(<span class="nm">5</span>)  <span class="cm">// top-5 after reranking</span>
+            .toList();
+    }
+
+    <span class="kw">private double</span> <span class="fn">rerankSingle</span>(String query, String passage) {
+        var requestBody = Map.of(
+            <span class="st">"inputs"</span>, List.of(
+                Map.of(<span class="st">"name"</span>, <span class="st">"query"</span>,   <span class="st">"shape"</span>, List.of(<span class="nm">1</span>,<span class="nm">1</span>),
+                       <span class="st">"datatype"</span>, <span class="st">"BYTES"</span>,  <span class="st">"data"</span>, List.of(query)),
+                Map.of(<span class="st">"name"</span>, <span class="st">"passage"</span>, <span class="st">"shape"</span>, List.of(<span class="nm">1</span>,<span class="nm">1</span>),
+                       <span class="st">"datatype"</span>, <span class="st">"BYTES"</span>,  <span class="st">"data"</span>, List.of(passage))
+            )
+        );
+        var response = restClient.post()
+            .uri(<span class="st">"/v2/models/rerank-pipeline/infer"</span>)
+            .body(requestBody)
+            .retrieve()
+            .body(<span class="kw">new</span> ParameterizedTypeReference&lt;Map&lt;String, Object&gt;&gt;() {});
+
+        var outputs = (List&lt;Map&lt;?,?&gt;&gt;) response.get(<span class="st">"outputs"</span>);
+        var data = (List&lt;?&gt;) outputs.get(<span class="nm">0</span>).get(<span class="st">"data"</span>);
+        <span class="kw">return</span> ((Number) data.get(<span class="nm">0</span>)).doubleValue();
+    }
+}</code></pre>
+
+  <div class="annotation tip">
+    <div class="ann-label">▸ No upstream code changes required</div>
+    The <code class="inline">TritonEmbeddingModel</code> bean implements Spring AI's <code class="inline">EmbeddingModel</code> interface. The <code class="inline">VectorStore</code>, <code class="inline">QuestionAnswerAdvisor</code>, and <code class="inline">RAGAdvisor</code> all consume <code class="inline">EmbeddingModel</code> — <strong>they are completely unaware of whether the backing implementation is a NIM pod, a Triton ensemble, or an OpenAI-compatible endpoint.</strong> The only change from your current setup: swap the <code class="inline">@Bean EmbeddingModel</code> in your config class to return a <code class="inline">TritonEmbeddingModel</code> instead of the OpenAI client. Same shape, same contract, different backing service.
+  </div>
+</section>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  §00 — NIM ANATOMY · layer pulse animation
+// ════════════════════════════════════════════════════════
+let nlStep = 0;
+function animateNimLayers(){
+  setInterval(()=>{
+    for(let i=0; i<5; i++){
+      const el = document.getElementById('nl'+i);
+      if(el) el.classList.toggle('lit', i === nlStep);
+    }
+    nlStep = (nlStep+1) % 5;
+  }, 700);
+}
+
+// ════════════════════════════════════════════════════════
+//  §01 — TIMELINE GRID animation
+// ════════════════════════════════════════════════════════
+const TL_SLOTS = 50;
+let tlPlaying = true, tlInterval = null, tlTick = 0;
+
+// 3 rows: embed-NIM, rerank-NIM, single-Triton
+// Schedule encodes what each "owner" gets per tick:
+// 0=embed-NIM hogs, 1=rerank-NIM gets a sliver, 2=OOM kill, 3=Triton clean
+const TL_ROWS = [
+  { name: 'embed-NIM',   color: '#00d4ff', short: 'embed-NIM' },
+  { name: 'rerank-NIM',  color: '#f59e0b', short: 'rerank-NIM' },
+  { name: 'single-Triton', color: '#10b981', short: 'Triton (sc.C)' },
+];
+
+// Per-tick state for each row: 'on' | 'off' | 'kill'
+function tlStateAtTick(rowIdx, tickPos){
+  // Scenario B for rows 0 (embed) and 1 (rerank), Scenario C for row 2
+  if(rowIdx === 2){
+    // Triton: every tick alternates between embed work and rerank work; always healthy
+    return 'on';
+  }
+  // Rows 0 & 1 simulate scenario B race
+  if(rowIdx === 0){
+    // embed-NIM dominates first half, then keeps going
+    if(tickPos < 30) return 'on';
+    if(tickPos < 40) return tickPos % 2 === 0 ? 'on' : 'off';
+    return 'on'; // greedy continues
+  }
+  if(rowIdx === 1){
+    // rerank-NIM gets a few slots, then OOM kills it
+    if(tickPos < 5) return 'on';
+    if(tickPos < 8) return tickPos % 2 === 0 ? 'on' : 'off';
+    if(tickPos === 8) return 'kill';
+    return 'off';
+  }
+  return 'off';
+}
+
+function buildTL(){
+  const c = document.getElementById('tlContainer');
+  if(!c) return;
+  c.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.minWidth = '700px';
+
+  // Header with time labels
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;padding-left:160px;margin-bottom:6px';
+  for(let i=0;i<TL_SLOTS;i+=5){
+    const l = document.createElement('div');
+    l.style.cssText = `flex:0 0 ${5/TL_SLOTS*100}%;font-size:9px;color:var(--dim)`;
+    l.textContent = 'T+'+(i*100)+'ms';
+    hdr.appendChild(l);
+  }
+  wrap.appendChild(hdr);
+
+  TL_ROWS.forEach((r, ri)=>{
+    const row = document.createElement('div');
+    row.className = 'tl-row';
+
+    const name = document.createElement('div');
+    name.className = 'tl-name';
+    name.style.color = r.color;
+    name.innerHTML = `<div style="width:8px;height:8px;border-radius:50%;background:${r.color}"></div>${r.short}`;
+    row.appendChild(name);
+
+    const line = document.createElement('div');
+    line.className = 'tl-line';
+    for(let s=0;s<TL_SLOTS;s++){
+      const slot = document.createElement('div');
+      slot.className='tl-slot';
+      slot.id=`tlSlot-${ri}-${s}`;
+      line.appendChild(slot);
+    }
+    row.appendChild(line);
+    wrap.appendChild(row);
+  });
+
+  c.appendChild(wrap);
+}
+
+function startTL(){
+  if(tlInterval) clearInterval(tlInterval);
+  tlInterval = setInterval(()=>{
+    if(!tlPlaying) return;
+    const tickPos = tlTick % TL_SLOTS;
+
+    TL_ROWS.forEach((r, ri)=>{
+      const slot = document.getElementById(`tlSlot-${ri}-${tickPos}`);
+      if(!slot) return;
+      const state = tlStateAtTick(ri, tickPos);
+      slot.classList.remove('kill');
+      if(state === 'on'){
+        slot.style.background = r.color;
+        slot.style.boxShadow = `0 0 6px ${r.color}88`;
+      } else if(state === 'kill'){
+        slot.classList.add('kill');
+      } else {
+        slot.style.background = 'var(--bg)';
+        slot.style.boxShadow = '';
+      }
+    });
+
+    tlTick++;
+  }, 100);
+}
+
+function toggleTL(){
+  tlPlaying = !tlPlaying;
+  const btn = document.getElementById('btnTLPlay');
+  if(!btn) return;
+  btn.textContent = tlPlaying ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', tlPlaying);
+}
+
+function resetTL(){
+  tlTick = 0;
+  for(let ri=0; ri<TL_ROWS.length; ri++)
+    for(let s=0; s<TL_SLOTS; s++){
+      const el = document.getElementById(`tlSlot-${ri}-${s}`);
+      if(el){ el.style.background = ''; el.style.boxShadow = ''; el.classList.remove('kill'); }
+    }
+}
+
+// ════════════════════════════════════════════════════════
+//  §02 — STEPS flow chain animation
+// ════════════════════════════════════════════════════════
+let stepIdx = 0, stepPlaying = true, stepInterval = null;
+function startSteps(){
+  if(stepInterval) clearInterval(stepInterval);
+  stepInterval = setInterval(()=>{
+    if(!stepPlaying) return;
+    for(let i=0; i<5; i++){
+      const el = document.getElementById('step-'+i);
+      if(el) el.classList.toggle('lit', i === stepIdx);
+    }
+    stepIdx = (stepIdx + 1) % 5;
+  }, 1100);
+}
+function toggleSteps(){
+  stepPlaying = !stepPlaying;
+  const btn = document.getElementById('btnStepsPlay');
+  if(!btn) return;
+  btn.textContent = stepPlaying ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', stepPlaying);
+}
+function resetSteps(){
+  stepIdx = 0;
+  for(let i=0; i<5; i++){
+    const el = document.getElementById('step-'+i);
+    if(el) el.classList.remove('lit');
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  §06 — ENSEMBLE canvas animation
+// ════════════════════════════════════════════════════════
+const ensCanvas = document.getElementById('ensembleCanvas');
+const ectx = ensCanvas.getContext('2d');
+let edpr = window.devicePixelRatio || 1;
+let ecssW = 0, ecssH = 0;
+
+// Ensure the canvas backing buffer matches its CSS display size.
+// Called every frame to handle late layout / font load / container resize.
+function ensureEnsCanvasSize(){
+  const r = ensCanvas.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(r.width));
+  const h = Math.max(1, Math.floor(r.height));
+  if(w !== ecssW || h !== ecssH){
+    ecssW = w;
+    ecssH = h;
+    ensCanvas.width  = ecssW * edpr;
+    ensCanvas.height = ecssH * edpr;
+    ectx.setTransform(edpr, 0, 0, edpr, 0, 0);
+  }
+}
+
+function resizeEnsCanvas(){ ensureEnsCanvasSize(); }
+
+let ensPlaying = true;
+let ensRequests = [];
+let ensLastSpawn = 0;
+let ensBurst = 0;
+
+// Layout: two ensemble rows, each 5 stages, with clear vertical separation.
+// All vertical positions are derived from canvas height so the diagram
+// scales correctly regardless of CSS height applied to the canvas.
+function getEnsLayout(){
+  const H = ecssH;
+  const padX = 24;
+  // Use 1/4 and 3/4 of canvas height as centers; reserve ~28px header room above each row
+  const yEmbed  = Math.round(H * 0.28);
+  const yRerank = Math.round(H * 0.72);
+  const yDivider = Math.round(H * 0.50);
+  const boxH    = 56;
+  const stageGap = 14;
+  return { W: ecssW, H, yEmbed, yRerank, yDivider, padX, boxH, stageGap };
+}
+
+// Auto-fit text to a maximum width by progressively shrinking font size,
+// then truncating with an ellipsis if it still doesn't fit at minFontPx.
+function fitText(text, maxPx, maxFontPx, minFontPx, weight){
+  for(let size = maxFontPx; size >= minFontPx; size--){
+    const font = weight + size + "px 'JetBrains Mono', monospace";
+    ectx.font = font;
+    if(ectx.measureText(text).width <= maxPx){
+      return { text, font };
+    }
+  }
+  // Couldn't fit even at min size — truncate
+  const font = weight + minFontPx + "px 'JetBrains Mono', monospace";
+  ectx.font = font;
+  let s = text;
+  while(s.length > 1 && ectx.measureText(s + '…').width > maxPx){
+    s = s.slice(0, -1);
+  }
+  return { text: s + '…', font };
+}
+
+function drawEnsStatic(){
+  const L = getEnsLayout();
+  ectx.clearRect(0,0,L.W,L.H);
+
+  // Faint horizontal divider between the two ensembles
+  ectx.strokeStyle = 'rgba(36,48,80,0.6)';
+  ectx.lineWidth = 1;
+  ectx.setLineDash([4,4]);
+  ectx.beginPath();
+  ectx.moveTo(L.padX, L.yDivider);
+  ectx.lineTo(L.W - L.padX, L.yDivider);
+  ectx.stroke();
+  ectx.setLineDash([]);
+
+  // === EMBED ENSEMBLE (top) ===
+  drawEnsembleRow(L, L.yEmbed, 'embed-pipeline', '#00d4ff', [
+    { label: 'CLIENT',          sub: 'raw text in',          kind: 'edge' },
+    { label: 'embed-tokenizer', sub: 'Python · CPU',         kind: 'stage' },
+    { label: 'embed-engine',    sub: 'TRT-LLM · GPU',        kind: 'stage' },
+    { label: 'embed-postprocess', sub: 'L2 norm · CPU',      kind: 'stage' },
+    { label: 'CLIENT',          sub: '1024-d vector out',    kind: 'edge' },
+  ]);
+
+  // === RERANK ENSEMBLE (bottom) ===
+  drawEnsembleRow(L, L.yRerank, 'rerank-pipeline', '#f59e0b', [
+    { label: 'CLIENT',           sub: 'query + passage in',   kind: 'edge' },
+    { label: 'rerank-tokenizer', sub: 'Python · CPU',         kind: 'stage' },
+    { label: 'rerank-engine',    sub: 'TRT-LLM · GPU',        kind: 'stage' },
+    { label: 'rerank-sigmoid',   sub: 'σ(logit) · CPU',       kind: 'stage' },
+    { label: 'CLIENT',           sub: 'relevance score out',  kind: 'edge' },
+  ]);
+}
+
+function drawEnsembleRow(L, yCenter, label, color, stages){
+  const N = stages.length;
+  const totalW = L.W - L.padX * 2;
+  const stageW = (totalW - (N - 1) * L.stageGap) / N;
+  const boxTop = yCenter - L.boxH / 2;
+
+  // Ensemble label (above the row)
+  ectx.fillStyle = color;
+  ectx.font = 'bold 12px JetBrains Mono';
+  ectx.textAlign = 'left';
+  ectx.fillText('▸ ' + label, L.padX, yCenter - L.boxH/2 - 14);
+
+  // Subtitle to the right — show short or long version based on available width
+  ectx.fillStyle = 'rgba(90,112,144,0.7)';
+  ectx.font = '9px JetBrains Mono';
+  const labelW = ectx.measureText('▸ ' + label).width;
+  const sub = L.W > 720
+    ? 'platform: ensemble · max_batch_size: ' + (label.includes('embed') ? '64' : '16')
+    : 'batch: ' + (label.includes('embed') ? '64' : '16');
+  ectx.fillText(sub, L.padX + labelW + 16, yCenter - L.boxH/2 - 14);
+
+  // Draw stage boxes
+  stages.forEach((stage, i)=>{
+    const x = L.padX + i * (stageW + L.stageGap);
+    const isEdge = stage.kind === 'edge';
+
+    // Box fill + border
+    ectx.fillStyle = isEdge ? '#0a0f1e' : '#0d1428';
+    ectx.strokeStyle = isEdge ? 'rgba(200,216,240,0.25)' : color;
+    ectx.lineWidth = isEdge ? 1 : 1.5;
+    ectx.fillRect(x, boxTop, stageW, L.boxH);
+    ectx.strokeRect(x, boxTop, stageW, L.boxH);
+
+    // Top accent strip for stages
+    if(!isEdge){
+      ectx.fillStyle = color;
+      ectx.fillRect(x, boxTop, stageW, 3);
+    }
+
+    // Stage label (top line) — auto-fits to box width
+    ectx.fillStyle = isEdge ? 'rgba(200,216,240,0.6)' : '#ffffff';
+    ectx.textAlign = 'center';
+    const topFontMax = isEdge ? 10 : 11;
+    const topWeight  = isEdge ? '' : 'bold ';
+    const topText = fitText(stage.label, stageW - 8, topFontMax, 8, topWeight);
+    ectx.font = topText.font;
+    ectx.fillText(topText.text, x + stageW/2, yCenter - 4);
+
+    // Sub label (second line)
+    ectx.fillStyle = isEdge ? 'rgba(90,112,144,0.8)' : color;
+    const subText = fitText(stage.sub, stageW - 8, 9, 8, '');
+    ectx.font = subText.font;
+    ectx.fillText(subText.text, x + stageW/2, yCenter + 12);
+
+    ectx.textAlign = 'left';
+  });
+
+  // Connectors with arrows between boxes
+  ectx.strokeStyle = color + '55';
+  ectx.fillStyle = color + '88';
+  ectx.lineWidth = 1.5;
+  for(let i=0; i<N-1; i++){
+    const x1 = L.padX + i * (stageW + L.stageGap) + stageW;
+    const x2 = L.padX + (i+1) * (stageW + L.stageGap);
+    // line
+    ectx.beginPath();
+    ectx.moveTo(x1, yCenter);
+    ectx.lineTo(x2 - 4, yCenter);
+    ectx.stroke();
+    // arrowhead
+    ectx.beginPath();
+    ectx.moveTo(x2 - 4, yCenter - 4);
+    ectx.lineTo(x2, yCenter);
+    ectx.lineTo(x2 - 4, yCenter + 4);
+    ectx.closePath();
+    ectx.fill();
+  }
+}
+
+function spawnEnsReq(dt){
+  ensLastSpawn += dt;
+  const interval = ensBurst > 0 ? 120 : 500;
+  if(ensLastSpawn > interval){
+    ensLastSpawn = 0;
+    if(ensBurst > 0) ensBurst--;
+    // 65% embed (more common), 35% rerank
+    const isEmbed = Math.random() < 0.65;
+    const L = getEnsLayout();
+    ensRequests.push({
+      type: isEmbed ? 'embed' : 'rerank',
+      color: isEmbed ? '#00d4ff' : '#f59e0b',
+      y: isEmbed ? L.yEmbed : L.yRerank,
+      stage: 0,           // 0 = client-in, 1..3 = pipeline stages, 4 = client-out
+      progress: 0,
+      x: 0,
+    });
+  }
+}
+
+function updateEnsReqs(dt){
+  const L = getEnsLayout();
+  const N = 5;
+  const totalW = L.W - L.padX * 2;
+  const stageW = (totalW - (N - 1) * L.stageGap) / N;
+
+  for(let i=ensRequests.length-1; i>=0; i--){
+    const r = ensRequests[i];
+    // Stages 1, 2 (compute-heavy) take longer; 0, 3, 4 are quick
+    const stageDuration = (r.stage === 1 || r.stage === 2) ? 900 : 500;
+    r.progress += dt / stageDuration;
+
+    if(r.progress >= 1){
+      r.progress = 0;
+      r.stage++;
+      if(r.stage >= N){
+        ensRequests.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Compute x as the dot moves through the current stage's box,
+    // then continues across the connector to the next stage's box center.
+    const curStageCenterX = L.padX + r.stage * (stageW + L.stageGap) + stageW / 2;
+    const nextStage = r.stage + 1;
+    const nextStageCenterX = nextStage < N
+      ? L.padX + nextStage * (stageW + L.stageGap) + stageW / 2
+      : curStageCenterX + stageW;  // exit off-screen for last stage
+    r.x = curStageCenterX + (nextStageCenterX - curStageCenterX) * r.progress;
+  }
+}
+
+function drawEnsReqs(){
+  ensRequests.forEach(r=>{
+    // Compute-stage dots glow brighter
+    const inCompute = r.stage === 1 || r.stage === 2;
+    const radius = inCompute ? 6 : 5;
+    const blur = inCompute ? 10 : 6;
+
+    ectx.shadowColor = r.color;
+    ectx.shadowBlur = blur;
+    ectx.fillStyle = r.color;
+    ectx.beginPath();
+    ectx.arc(r.x, r.y, radius, 0, Math.PI*2);
+    ectx.fill();
+    ectx.shadowBlur = 0;
+
+    // Inner highlight on the dot
+    ectx.fillStyle = 'rgba(255,255,255,0.4)';
+    ectx.beginPath();
+    ectx.arc(r.x - radius*0.3, r.y - radius*0.3, radius*0.4, 0, Math.PI*2);
+    ectx.fill();
+  });
+}
+
+let ensLastFrame = performance.now();
+function ensLoop(){
+  const now = performance.now();
+  const dt = Math.min(50, now - ensLastFrame);
+  ensLastFrame = now;
+
+  // Auto-correct any CSS/canvas-size mismatch every frame
+  ensureEnsCanvasSize();
+
+  if(ensPlaying){
+    spawnEnsReq(dt);
+    updateEnsReqs(dt);
+  }
+
+  drawEnsStatic();
+  drawEnsReqs();
+
+  requestAnimationFrame(ensLoop);
+}
+
+function toggleEnsemble(){
+  ensPlaying = !ensPlaying;
+  const btn = document.getElementById('btnEnsPlay');
+  if(!btn) return;
+  btn.textContent = ensPlaying ? '⏸ Pause' : '▶ Play';
+  btn.classList.toggle('active', ensPlaying);
+  if(ensPlaying) ensLastFrame = performance.now();
+}
+
+function burstEnsemble(){ ensBurst = 30; }
+function resetEnsemble(){ ensRequests = []; }
+
+// ════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════
+function boot(){
+  animateNimLayers();
+  buildTL();
+  startTL();
+  startSteps();
+  resizeEnsCanvas();
+  requestAnimationFrame(ensLoop);
+}
+
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+window.addEventListener('resize', resizeEnsCanvas);
+</script>
+
+</body>
+</html>
