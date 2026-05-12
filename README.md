@@ -15,7 +15,9 @@ A static site hosted on GitHub Pages — a running notebook of notes and interac
 │   ├── welcome.html       # Sample first post
 │   └── _template.html     # Copy this to start a new post
 ├── visualizations/        # Self-contained interactive HTML pages
-│   └── gpu-multimodel-viz.html
+│   ├── gpu-multimodel-viz.html
+│   ├── nim-triton-gpu-sharing.html
+│   └── VISUALIZATION_STYLE_GUIDE.md   # Spec for new visualizations (internal)
 ├── assets/
 │   ├── css/
 │   │   ├── base.css       # Shared layout, nav, cards, dark theme
@@ -80,6 +82,8 @@ npx serve .
 
 1. Drop a self-contained HTML file into `visualizations/`.
 2. Add a matching entry to the `visualizations` array in `assets/js/posts.js`.
+
+> **Design spec:** New interactive visualizations should follow [`visualizations/VISUALIZATION_STYLE_GUIDE.md`](visualizations/VISUALIZATION_STYLE_GUIDE.md) — color palette, typography, section rhythm, animation patterns, and validation checklist. Reading this before starting a new viz keeps the body of work visually consistent.
 
 ## Conventions
 
