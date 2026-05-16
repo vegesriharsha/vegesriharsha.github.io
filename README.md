@@ -15,16 +15,19 @@ A static site hosted on GitHub Pages — a running notebook of notes and interac
 │   ├── welcome.html       # Sample first post
 │   └── _template.html     # Copy this to start a new post
 ├── visualizations/        # Self-contained interactive HTML pages
+│   ├── ansible-visual-primer.html
 │   ├── gpu-multimodel-viz.html
 │   ├── nim-triton-gpu-sharing.html
-│   └── VISUALIZATION_STYLE_GUIDE.md   # Spec for new visualizations (internal)
+│   └── VISUALIZATION_STYLE_GUIDE.md   # Spec for deep-dive technical viz (GPU/systems style)
 ├── assets/
 │   ├── css/
 │   │   ├── base.css       # Shared layout, nav, cards, dark theme
+│   │   ├── components.css # Interactive widgets: btn, pill, stage, tab, fleet, drift-vm, log
 │   │   └── post.css       # Article reading styles
 │   ├── js/
 │   │   └── posts.js       # Content manifest + home-page renderer
 │   └── img/               # Static images (empty for now)
+├── SITE_STYLE_GUIDE.md    # Shared visual language for ALL pages — read first
 ├── .nojekyll              # Disables GitHub's Jekyll processing
 ├── .gitignore
 └── README.md
@@ -80,10 +83,19 @@ npx serve .
 
 ## Adding a new visualization
 
-1. Drop a self-contained HTML file into `visualizations/`.
-2. Add a matching entry to the `visualizations` array in `assets/js/posts.js`.
+1. Drop a self-contained HTML file into `visualizations/`. Use `visualizations/ansible-visual-primer.html` as the skeleton — header, hero, section rhythm, footer.
+2. Link `assets/css/base.css` and (if using interactive widgets) `assets/css/components.css`.
+3. Add a matching entry to the `visualizations` array in `assets/js/posts.js`.
 
-> **Design spec:** New interactive visualizations should follow [`visualizations/VISUALIZATION_STYLE_GUIDE.md`](visualizations/VISUALIZATION_STYLE_GUIDE.md) — color palette, typography, section rhythm, animation patterns, and validation checklist. Reading this before starting a new viz keeps the body of work visually consistent.
+## Design system — read before building
+
+The site has **two style guides**, layered:
+
+- **[`SITE_STYLE_GUIDE.md`](SITE_STYLE_GUIDE.md)** — required reading. Defines the shared visual language (palette, typography, header, footer, cards, buttons, stages, tabs, fleet cells) used on every page. The reference implementation is `visualizations/ansible-visual-primer.html`.
+
+- **[`visualizations/VISUALIZATION_STYLE_GUIDE.md`](visualizations/VISUALIZATION_STYLE_GUIDE.md)** — additional reading for deep-dive technical visualizations (animated cell grids of real GPU SMs, matrix sweeps, particle canvases, scheduler timelines). Used in `gpu-multimodel-viz.html` and `nim-triton-gpu-sharing.html`. Layers on top of the site guide.
+
+For most learning pages — interactive simulators, tabbed use cases, comparison demos — `SITE_STYLE_GUIDE.md` alone is enough.
 
 ## Conventions
 

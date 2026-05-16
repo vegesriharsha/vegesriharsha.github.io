@@ -1,0 +1,350 @@
+/* ============================================================
+   Components — interactive widget library
+   Opt-in: link this file *after* base.css when building a
+   visualization or learning page that uses simulators, demos,
+   tabs, or pill rows.
+   ============================================================ */
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  background: linear-gradient(180deg, var(--acc-1), #5e44d6);
+  color: #fff;
+  border: 0;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 150ms, transform 100ms;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.18) inset,
+    0 8px 24px -12px rgba(124,92,255,0.6);
+}
+.btn:hover { filter: brightness(1.10); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--border-3);
+  color: var(--text-2);
+  box-shadow: none;
+}
+.btn.ghost:hover {
+  border-color: rgba(255,255,255,0.30);
+  background: rgba(255,255,255,0.04);
+  filter: none;
+}
+
+/* ---------- Pills (chip row) ---------- */
+
+.pills { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.pill {
+  background: var(--acc-1-soft);
+  border: 1px solid rgba(124,92,255,0.30);
+  color: #c5b9ff;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+.pill.teal  { background: var(--acc-2-soft); border-color: rgba(95,224,204,0.30); color: #88ebda; }
+.pill.green { background: var(--acc-3-soft); border-color: rgba(74,222,128,0.30); color: #88e0a3; }
+.pill.amber { background: var(--acc-4-soft); border-color: rgba(251,191,36,0.30); color: #ffd86b; }
+.pill.red   { background: var(--acc-5-soft); border-color: rgba(248,113,113,0.30); color: #ffa3a3; }
+
+/* ---------- Stage (canvas for an interactive demo) ---------- */
+
+.stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 28px;
+  margin: 24px 0;
+}
+
+.stage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.stage-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.stage-title code { color: var(--acc-1); }
+
+/* ---------- Tabs ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-2);
+  margin-bottom: 24px;
+}
+
+.tab {
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--dim);
+  border-bottom: 2px solid transparent;
+  transition: all 150ms;
+  margin-bottom: -1px;
+  font-family: var(--font-sans);
+}
+.tab:hover { color: var(--text-2); }
+.tab.active {
+  color: var(--text-strong);
+  border-bottom-color: var(--acc-1);
+}
+
+.tab-panel { display: none; }
+.tab-panel.active {
+  display: block;
+  animation: fadeIn 250ms ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Inline code (in component contexts) ---------- */
+
+.k { color: var(--acc-1); font-family: var(--font-mono); }
+
+/* ---------- Code blocks (when not using post.css) ---------- */
+
+.stage pre, .demo pre {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: #cfd5e4;
+  margin: 16px 0;
+}
+
+/* Generic code-token tinting for hand-marked snippets */
+pre .k { color: #b3a4ff; background: none; padding: 0; }
+pre .s { color: #7dd3fc; }
+pre .c { color: var(--dim-2); }
+pre .n { color: var(--acc-4); }
+pre .y { color: var(--acc-2); }
+
+/* ---------- Server / fleet cells (idempotence, patch, cert sims) ---------- */
+
+.fleet {
+  display: grid;
+  gap: 10px;
+}
+.fleet.fleet-5  { grid-template-columns: repeat(5, 1fr); }
+.fleet.fleet-8  { grid-template-columns: repeat(8, 1fr); }
+.fleet.fleet-16 { grid-template-columns: repeat(16, 1fr); gap: 6px; }
+.fleet.fleet-20 { grid-template-columns: repeat(20, 1fr); gap: 4px; }
+
+.cell {
+  aspect-ratio: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  transition: background 300ms, border-color 300ms, transform 300ms;
+}
+
+.cell .label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  position: absolute;
+  top: 6px; left: 8px;
+}
+.cell .state {
+  font-size: 11px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+/* State variants — pair color + glow for visibility */
+.cell.checking { border-color: var(--acc-4); background: var(--acc-4-soft); }
+.cell.changing { border-color: var(--acc-6); background: var(--acc-6-soft); }
+.cell.ok       { border-color: var(--acc-3); background: var(--acc-3-soft); }
+.cell.skip     { border-color: rgba(74,222,128,0.4); background: rgba(74,222,128,0.05); }
+.cell.fail     { border-color: var(--acc-5); background: var(--acc-5-soft); }
+.cell.drift    { border-color: var(--acc-5); background: var(--acc-5-soft); }
+
+/* ---------- Stat tiles (run summary) ---------- */
+
+.stat-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.stat {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--text-2);
+}
+.stat .n {
+  font-size: 18px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.stat.ok      .n { color: var(--acc-3); }
+.stat.changed .n { color: var(--acc-6); }
+.stat.failed  .n { color: var(--acc-5); }
+.stat.runs    .n { color: var(--acc-1); }
+
+/* ---------- Log box (mono terminal output) ---------- */
+
+.log {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dim);
+  min-height: 72px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.log .l { margin-bottom: 2px; }
+.log .l.ok { color: #88e0a3; }
+.log .l.ch { color: #ffb185; }
+.log .l.sk { color: var(--dim-2); }
+.log .l.fa { color: #ffa3a3; }
+
+/* ---------- Drift-style VM cards (before/after demos) ---------- */
+
+.drift-vm {
+  background: var(--panel-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin: 14px 0;
+  transition: all 300ms;
+}
+.drift-vm.drifted    { border-color: var(--acc-5); background: var(--acc-5-soft); }
+.drift-vm.destroying { border-color: var(--acc-5); background: rgba(248,113,113,0.14); animation: shake 200ms 6; }
+.drift-vm.gone       { opacity: 0.2; transform: scale(0.92); border-style: dashed; }
+.drift-vm.rebuilding { border-color: var(--acc-4); background: var(--acc-4-soft); }
+.drift-vm.fixing     { border-color: var(--acc-4); background: var(--acc-4-soft); }
+.drift-vm.healed     { border-color: var(--acc-3); background: var(--acc-3-soft); }
+
+.drift-vm .vm-id     { font-family: var(--font-mono); font-size: 12px; color: var(--dim); }
+.drift-vm .vm-state  { font-size: 14px; font-weight: 500; color: var(--text); margin-top: 4px; }
+.drift-vm .vm-detail { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  25%     { transform: translateX(-2px); }
+  75%     { transform: translateX(2px); }
+}
+
+/* ---------- Progress bar ---------- */
+
+.progress {
+  height: 6px;
+  background: var(--panel-3);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.progress .bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--acc-1), var(--acc-2));
+  transition: width 300ms ease-out;
+}
+
+/* ---------- Panel pair (side-by-side comparison) ---------- */
+
+.panel-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 760px) { .panel-pair { grid-template-columns: 1fr; } }
+
+.panel {
+  border: 1px solid var(--border-2);
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+.panel.tinted-purple { background: var(--acc-1-soft); border-color: rgba(124,92,255,0.30); }
+.panel.tinted-teal   { background: var(--acc-2-soft); border-color: rgba(95,224,204,0.30); }
+.panel.tinted-green  { background: var(--acc-3-soft); border-color: rgba(74,222,128,0.30); }
+.panel.tinted-coral  { background: var(--acc-6-soft); border-color: rgba(255,138,91,0.30); }
+.panel.tinted-red    { background: var(--acc-5-soft); border-color: rgba(248,113,113,0.30); }
+
+.panel h3 { font-size: 15px; margin-bottom: 4px; }
+.panel .sub { font-size: 12px; color: var(--dim); margin-bottom: 16px; }
+
+/* ---------- Tagged row (numbered/badged step) ---------- */
+
+.row {
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: border-color 150ms, transform 100ms;
+}
+.row:hover { border-color: rgba(124,92,255,0.5); transform: translateX(2px); }
+.row.active { border-color: var(--acc-1); background: var(--acc-1-soft); }
+
+.row .badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-2);
+  min-width: 36px;
+  text-align: center;
+}
+
+.row .body { flex: 1; }
+.row .body .t { font-size: 14px; color: var(--text-strong); font-weight: 500; }
+.row .body .s { font-size: 12px; color: var(--dim); }
+
+/* ---------- Detail block (clickable explainer below a row list) ---------- */
+
+.detail {
+  margin-top: 16px;
+  min-height: 96px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.detail .k { color: var(--acc-1); font-family: var(--font-mono); background: none; padding: 0; }

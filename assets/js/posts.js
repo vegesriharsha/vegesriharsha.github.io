@@ -19,6 +19,13 @@ window.SITE_CONTENT = {
 
   visualizations: [
     {
+      title: "Ansible — A Visual Primer for the Bank",
+      slug: "ansible-visual-primer.html",
+      date: "2026-05-15",
+      summary: "Interactive primer on Ansible core concepts — agentless architecture, idempotence, drift response — with banking use cases: GitLab runner tooling, Tripwire FIM, rolling patches, CIS hardening, certificate and keytab rotation.",
+      tags: ["ansible", "infra", "banking"]
+    },
+    {
       title: "NIM + Triton — Multi-Model GPU Sharing",
       slug: "nim-triton-gpu-sharing.html",
       date: "2026-05-10",

@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ansible — a visual primer for the bank — my-learnings</title>
+  <meta name="description" content="An interactive primer on Ansible core concepts, applied to banking use cases: idempotence, drift response, patching, CIS hardening, certificate and keytab rotation." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/components.css" />
+  <style>
+    /* ------------------------------------------------------------
+       Page-specific widgets. Everything else uses shared CSS.
+       Kept inline because these patterns are unique to this page;
+       move into components.css if reused elsewhere.
+       ------------------------------------------------------------ */
+
+    /* Patch fleet — 100 server squares, color per stage */
+    .patch-fleet {
+      display: grid;
+      grid-template-columns: repeat(20, 1fr);
+      gap: 4px;
+      margin: 18px 0;
+    }
+    .patch-srv {
+      aspect-ratio: 1;
+      background: var(--panel-2);
+      border-radius: 3px;
+      transition: background 300ms, transform 200ms;
+    }
+    .patch-srv.draining  { background: var(--acc-4); }
+    .patch-srv.patching  { background: var(--acc-1); transform: scale(0.85); }
+    .patch-srv.rebooting { background: var(--acc-6); transform: scale(0.7); }
+    .patch-srv.returning { background: var(--acc-2); }
+    .patch-srv.healthy   { background: var(--acc-3); }
+
+    .patch-legend {
+      display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px;
+      font-size: 12px; color: var(--dim);
+    }
+    .patch-legend .lg { display: flex; align-items: center; gap: 6px; }
+    .patch-legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+
+    /* CIS controls list */
+    .cis-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
+    @media (max-width: 600px) { .cis-grid { grid-template-columns: 1fr; } }
+    .cis-row {
+      background: var(--panel-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 12px 14px;
+      display: flex; align-items: center; gap: 12px;
+      transition: all 300ms;
+    }
+    .cis-row .id   { font-family: var(--font-mono); font-size: 11px; color: var(--dim); min-width: 60px; }
+    .cis-row .name { flex: 1; font-size: 13px; color: var(--text); }
+    .cis-row .stat {
+      font-family: var(--font-mono); font-size: 11px;
+      padding: 3px 8px; border-radius: 4px;
+    }
+    .cis-row.pass .stat { background: var(--acc-3-soft); color: #88e0a3; }
+    .cis-row.fail .stat { background: var(--acc-5-soft); color: #ffa3a3; }
+    .cis-row.fix  .stat { background: var(--acc-1-soft); color: #c5b9ff; }
+
+    /* Cert timeline */
+    .cert-timeline {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px; margin: 14px 0;
+    }
+    .cert-axis {
+      height: 4px; border-radius: 4px; margin: 32px 0 12px; position: relative;
+      background: linear-gradient(90deg,
+        rgba(74,222,128,0.4), rgba(251,191,36,0.6), rgba(248,113,113,0.7));
+    }
+    .cert-marker {
+      position: absolute; top: -16px; width: 2px; height: 36px;
+      background: rgba(255,255,255,0.3);
+    }
+    .cert-marker .pin {
+      position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+      width: 12px; height: 12px; background: #fff; border-radius: 50%;
+      border: 2px solid var(--panel);
+    }
+    .cert-marker.warn .pin { background: var(--acc-4); }
+    .cert-marker.crit .pin { background: var(--acc-5); animation: pulse 1.5s infinite; }
+    .cert-marker .lbl {
+      position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%);
+      font-family: var(--font-mono); font-size: 10px; color: var(--dim);
+      white-space: nowrap;
+    }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.6); }
+      50%     { box-shadow: 0 0 0 8px rgba(248,113,113,0); }
+    }
+    .cert-axis-labels {
+      display: flex; justify-content: space-between;
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--dim-2); margin-top: 16px;
+    }
+    .cert-fleet {
+      display: grid; grid-template-columns: repeat(8,1fr); gap: 6px; margin-top: 18px;
+    }
+    .cert-srv {
+      aspect-ratio: 1; background: var(--panel-2);
+      border: 1px solid rgba(248,113,113,0.5);
+      border-radius: 6px; display: grid; place-items: center;
+      transition: all 400ms;
+    }
+    .cert-srv.rotated { border-color: var(--acc-3); background: var(--acc-3-soft); }
+    .cert-srv.rotated::after { content: "✓"; color: var(--acc-3); font-size: 14px; font-weight: 700; }
+
+    /* Vault flow */
+    .vault-stage {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 28px;
+      position: relative; min-height: 280px; overflow: hidden;
+    }
+    .vault-vault {
+      position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
+      width: 100px; height: 100px; border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, var(--acc-1), #5e44d6);
+      display: grid; place-items: center; color: #fff;
+      font-weight: 600; font-size: 13px;
+      box-shadow: 0 12px 32px -8px rgba(124,92,255,0.4);
+    }
+    .vault-svr-col {
+      position: absolute; right: 32px; top: 28px; bottom: 28px;
+      display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
+    }
+    .vault-svr {
+      width: 160px; padding: 10px 14px; background: var(--panel-2);
+      border: 1px solid var(--border-2); border-radius: var(--radius);
+      font-size: 12px; color: var(--text-2); transition: all 400ms;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .vault-svr.rotated { border-color: var(--acc-3); background: var(--acc-3-soft); }
+    .vault-svr .check { opacity: 0; color: var(--acc-3); transition: opacity 300ms; }
+    .vault-svr.rotated .check { opacity: 1; }
+    .vault-conduit { position: absolute; left: 132px; right: 200px; top: 0; bottom: 0; pointer-events: none; }
+    .vault-pulse {
+      position: absolute; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--acc-2); box-shadow: 0 0 12px var(--acc-2);
+      opacity: 0; pointer-events: none;
+    }
+
+    /* Use-case layout */
+    .uc-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; align-items: start; }
+    @media (max-width: 880px) { .uc-grid { grid-template-columns: 1fr; } }
+    .uc-prose .meta {
+      display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px;
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    .uc-prose .meta span {
+      background: rgba(255,255,255,0.04); padding: 4px 10px;
+      border-radius: 6px; color: var(--text-2);
+    }
+    .uc-prose ul { padding-left: 18px; color: var(--text-2); font-size: 14px; }
+    .uc-prose ul li { margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../" style="text-decoration:none">
+        <div class="logo-top">my · learnings</div>
+        <div class="logo-main">notes <span>&</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../">Home</a>
+        <a href="../#posts">Notes</a>
+        <a href="../#viz">Visualizations</a>
+        <a href="../about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ============== HERO ============== -->
+  <section class="hero">
+    <div class="container">
+      <h1>Ansible<br>for the bank.</h1>
+      <p class="tagline">A visual primer for the agentless, idempotent way to keep thousands of Linux and Windows servers in the exact shape your auditors signed off on.</p>
+      <div class="pills">
+        <span class="pill">agentless</span>
+        <span class="pill teal">idempotent</span>
+        <span class="pill">declarative YAML</span>
+        <span class="pill teal">cross-platform</span>
+        <span class="pill">vault-aware</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== THREE PRINCIPLES ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">why it exists</span>
+      <h2>Three principles that earn it a seat at the bank</h2>
+      <p class="lead">Skim these once and the rest of the page will make sense.</p>
+      <div class="grid grid-3" style="margin-top: 28px;">
+        <div class="card">
+          <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+          <h3 class="card-title">Agentless</h3>
+          <p>No daemon, no listener, no extra port. Just SSH or WinRM that already exists. Less to risk-assess, less to firewall, fewer InfoSec exceptions.</p>
+        </div>
+        <div class="card">
+          <div class="ico teal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg></div>
+          <h3 class="card-title">Idempotent</h3>
+          <p>Run the same playbook ten times — the system ends in the same shape it would after one run. Safe to schedule, safe to re-trigger after a failure.</p>
+        </div>
+        <div class="card">
+          <div class="ico amber"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+          <h3 class="card-title">Declarative YAML</h3>
+          <p>You describe the state you want, not the commands. Reviewable in a pull request. Diff-able. Auditable. The same words your compliance team uses.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== ARCHITECTURE ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">how it works</span>
+      <h2>The control node pushes; the managed nodes do nothing on their own</h2>
+      <p>Click any managed node to see how the control node reaches it.</p>
+
+      <div class="stage">
+        <div class="panel-pair">
+          <div class="panel tinted-purple">
+            <h3>Control node</h3>
+            <div class="sub">your laptop, jenkins, awx, or a gitlab runner</div>
+            <div class="row"><span class="badge">.ini</span><div class="body"><div class="t">Inventory</div><div class="s">groups of hosts and per-host vars</div></div></div>
+            <div class="row"><span class="badge">.yml</span><div class="body"><div class="t">Playbooks &amp; roles</div><div class="s">desired state, top to bottom</div></div></div>
+            <div class="row"><span class="badge">.py</span><div class="body"><div class="t">Modules</div><div class="s">dnf, copy, win_feature, template…</div></div></div>
+          </div>
+          <div class="panel tinted-teal">
+            <h3>Managed nodes</h3>
+            <div class="sub">no agent, nothing pre-installed beyond ssh / winrm</div>
+            <div class="row" data-target="linux"><span class="badge">SSH</span><div class="body"><div class="t">Linux VMs</div><div class="s">RHEL, Ubuntu, Amazon Linux</div></div></div>
+            <div class="row" data-target="windows"><span class="badge">WinRM</span><div class="body"><div class="t">Windows servers</div><div class="s">2019, 2022, Server Core</div></div></div>
+            <div class="row" data-target="api"><span class="badge">HTTPS</span><div class="body"><div class="t">Network &amp; cloud APIs</div><div class="s">switches, vCenter, AWS, Azure</div></div></div>
+          </div>
+        </div>
+        <div class="detail" id="archDetail">Click a managed node above to see how Ansible talks to it.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== INVENTORY + PLAYBOOK ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">what you write</span>
+      <h2>Two files: an inventory and a playbook</h2>
+      <p>The inventory says <em>where</em>. The playbook says <em>what state</em>. Roles let you bundle reusable chunks. That's most of the day-to-day surface area.</p>
+
+      <div class="grid grid-2" style="margin-top: 24px;">
+        <div>
+          <h4 style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px;">inventory/prod.ini</h4>
+<pre><span class="c"># grouped by purpose, not just by hostname</span>
+<span class="k">[gitlab_runners_linux]</span>
+gl-runner-01.bank.intra
+gl-runner-02.bank.intra
+gl-runner-03.bank.intra
+
+<span class="k">[gitlab_runners_win]</span>
+gl-runner-w01.bank.intra
+
+<span class="k">[gitlab_runners:children]</span>
+gitlab_runners_linux
+gitlab_runners_win
+
+<span class="k">[gitlab_runners_linux:vars]</span>
+ansible_user<span class="y">=</span>ansible_svc
+tools_image<span class="y">=</span>registry.bank.intra/build/tools:2026.05</pre>
+        </div>
+        <div>
+          <h4 style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px;">site.yml — a play targets a group</h4>
+<pre><span class="y">- </span><span class="k">name:</span> <span class="s">Configure linux runners</span>
+  <span class="k">hosts:</span> gitlab_runners_linux
+  <span class="k">become:</span> <span class="n">yes</span>
+  <span class="k">roles:</span>
+    <span class="y">- </span>common_baseline
+    <span class="y">- </span>podman
+    <span class="y">- </span>kerberos_client
+
+<span class="y">- </span><span class="k">name:</span> <span class="s">Configure windows runners</span>
+  <span class="k">hosts:</span> gitlab_runners_win
+  <span class="k">roles:</span>
+    <span class="y">- </span>tripwire_axon</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== IDEMPOTENCE ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">the property that makes it safe</span>
+      <h2>Idempotence — re-running is a feature, not a risk</h2>
+      <p class="lead">Ansible modules check current state and only act on the delta. Hit "run playbook" twice and watch.</p>
+
+      <div class="stage">
+        <div class="stage-toolbar">
+          <div class="stage-title">5 fresh VMs &mdash; task: <code>ensure podman is installed</code></div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn ghost" id="simReset">reset</button>
+            <button class="btn" id="simRun">run playbook</button>
+          </div>
+        </div>
+        <div class="fleet fleet-5" id="simFleet"></div>
+        <div class="stat-row" style="margin-top:16px;">
+          <div class="stat ok">ok <span class="n" id="simOk">0</span></div>
+          <div class="stat changed">changed <span class="n" id="simChanged">0</span></div>
+          <div class="stat failed">failed <span class="n" id="simFailed">0</span></div>
+          <div class="stat runs">runs <span class="n" id="simRuns">0</span></div>
+        </div>
+        <div class="log" id="simLog" style="margin-top:16px;"><div class="l sk">PLAY [Configure linux runners] *********************************</div></div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top: 28px;">
+        <div>
+          <h3>First run</h3>
+          <p style="font-size:14px;color:var(--text-2);">Each task <em>checks then changes</em>. The summary shows <code>changed=N</code>. That count is your audit-friendly proof of what shifted.</p>
+        </div>
+        <div>
+          <h3>Every run after</h3>
+          <p style="font-size:14px;color:var(--text-2);">Same task. Same target. Module sees the desired state already exists, returns <code>ok</code>, no change. Safe to schedule daily.</p>
+        </div>
+      </div>
+
+      <h4 style="margin-top:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px;">the task that drives the demo</h4>
+<pre><span class="y">- </span><span class="k">name:</span> <span class="s">Ensure podman is installed</span>
+  <span class="k">ansible.builtin.dnf:</span>
+    <span class="k">name:</span> podman
+    <span class="k">state:</span> <span class="n">present</span>     <span class="c"># declared state — not "run dnf install"</span></pre>
+    </div>
+  </section>
+
+  <!-- ============== CONCEPTS GRID ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">the rest of the toolkit</span>
+      <h2>Five more building blocks</h2>
+      <div class="grid grid-3" style="margin-top: 24px;">
+        <div class="card">
+          <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg></div>
+          <h3 class="card-title">Roles</h3>
+          <p>A reusable bundle: tasks, defaults, templates, files, handlers. Write <code>kerberos_client</code> once, include it from every play that needs Kerberos.</p>
+        </div>
+        <div class="card">
+          <div class="ico teal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+          <h3 class="card-title">Templates (Jinja2)</h3>
+          <p>Config files become parameterised. Render <code>krb5.conf</code>, <code>nginx.conf</code>, <code>web.config</code> per host, per environment, per realm.</p>
+        </div>
+        <div class="card">
+          <div class="ico amber"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+          <h3 class="card-title">Handlers</h3>
+          <p>Tasks that only fire when notified — perfect for "restart sssd <em>iff</em> the krb5.conf actually changed".</p>
+        </div>
+        <div class="card">
+          <div class="ico coral"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+          <h3 class="card-title">Vault</h3>
+          <p>AES-256 secrets at rest in your repo. Decrypts at runtime with a key from your CI, HashiCorp Vault, or KMS. Auditors love it.</p>
+        </div>
+        <div class="card">
+          <div class="ico green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+          <h3 class="card-title">Facts</h3>
+          <p>Auto-gathered context per host: OS, kernel, IP, RAM, mounts, patch level. Use them in conditionals, capture them as your live CMDB.</p>
+        </div>
+        <div class="card">
+          <div class="ico red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+          <h3 class="card-title">--check &amp; --diff</h3>
+          <p>Dry-run mode reports what <em>would</em> change without touching the host. Pair with <code>--diff</code> to see file-level edits before they happen.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== ANSIBLE VS TERRAFORM ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">the boundary that matters</span>
+      <h2>Ansible vs Terraform &mdash; same drift, two reactions</h2>
+      <p class="lead">Both tools are valuable. The honest test: when a live VM drifts, what's the right answer? Click "inject drift" then run each fix.</p>
+
+      <div class="stage">
+        <div class="stage-toolbar">
+          <div class="stage-title">Production VM <code>app-tier-07</code> &mdash; was on schema v3, now v2 after a manual hotfix</div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn ghost" id="driftReset">reset</button>
+            <button class="btn" id="driftInject">inject drift</button>
+          </div>
+        </div>
+
+        <div class="panel-pair">
+          <div class="panel tinted-coral">
+            <h3><span style="color:var(--acc-6);">●</span> Terraform &mdash; rebuild the resource</h3>
+            <p style="font-size:13px; color:var(--text-2); margin: 6px 0 0;">Drift correction = destroy + recreate.</p>
+            <div class="drift-vm" id="tfVm">
+              <div class="vm-id">vm-id: i-04ac…be21</div>
+              <div class="vm-state">healthy</div>
+              <div class="vm-detail">schema v3, in service</div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; padding:10px 14px; background:var(--panel-3); border:1px solid var(--border); border-radius:8px;">
+              <span style="color:var(--text-2);">downtime accumulated</span>
+              <span style="color:var(--acc-6); font-weight:600;" id="tfDowntime">0s</span>
+            </div>
+            <button class="btn" id="tfFix" style="margin-top:14px; width:100%;" disabled>terraform destroy + apply</button>
+          </div>
+
+          <div class="panel tinted-green">
+            <h3><span style="color:var(--acc-3);">●</span> Ansible &mdash; fix in place</h3>
+            <p style="font-size:13px; color:var(--text-2); margin: 6px 0 0;">Drift correction = re-run the idempotent playbook.</p>
+            <div class="drift-vm" id="anVm">
+              <div class="vm-id">vm-id: i-04ac…be21</div>
+              <div class="vm-state">healthy</div>
+              <div class="vm-detail">schema v3, in service</div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; padding:10px 14px; background:var(--panel-3); border:1px solid var(--border); border-radius:8px;">
+              <span style="color:var(--text-2);">downtime accumulated</span>
+              <span style="color:var(--acc-3); font-weight:600;" id="anDowntime">0s</span>
+            </div>
+            <button class="btn" id="anFix" style="margin-top:14px; width:100%;" disabled>ansible-playbook fix.yml</button>
+          </div>
+        </div>
+
+        <p style="margin-top:18px; font-size:13px; color:var(--dim);">The pattern: <strong style="color:var(--text-strong);">Terraform builds the box; Ansible furnishes it and keeps it tidy forever after.</strong></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== USE CASES ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">where it earns its keep at the bank</span>
+      <h2>Six use cases, one engine</h2>
+      <p>Each tab is a different job for the same tool. Two are yours; four are common neighbours that almost always come along.</p>
+
+      <div class="tabs" id="tabs" style="margin-top: 28px;">
+        <div class="tab active" data-tab="runner">GitLab runners</div>
+        <div class="tab" data-tab="tripwire">Tripwire FIM</div>
+        <div class="tab" data-tab="patch">Patch management</div>
+        <div class="tab" data-tab="cis">CIS hardening</div>
+        <div class="tab" data-tab="cert">Certificate rotation</div>
+        <div class="tab" data-tab="keytab">Keytab &amp; secrets rotation</div>
+      </div>
+
+      <!-- runners -->
+      <div class="tab-panel active" data-panel="runner">
+        <div class="uc-grid">
+          <div class="uc-prose">
+            <h3 style="font-size:22px;font-family:var(--font-display);">Provision tooling on GitLab runner VMs</h3>
+            <div class="meta"><span>after Terraform creates the VM</span><span>idempotent end-to-end</span></div>
+            <p>Terraform hands off a fresh RHEL 9 box. Ansible installs podman, pulls the internal tools image, drops the Kerberos client, and configures SQL Server integrated auth via a vault-decrypted keytab.</p>
+            <p style="font-size:13px; color:var(--dim);">Re-runs every quarter when the tools image bumps or the keytab rotates &mdash; without rebuilding a single VM.</p>
+          </div>
+          <div class="stage" style="margin: 0;">
+            <div class="stage-title" style="margin-bottom: 12px;">playbook flow</div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div class="row"><span class="badge">1</span><div class="body"><div class="t">Install podman + container tools</div><div class="s">dnf module</div></div></div>
+              <div class="row"><span class="badge">2</span><div class="body"><div class="t">Pull internal tools image</div><div class="s">containers.podman.podman_image</div></div></div>
+              <div class="row"><span class="badge">3</span><div class="body"><div class="t">Install Kerberos client</div><div class="s">krb5-workstation + templated krb5.conf</div></div></div>
+              <div class="row"><span class="badge">4</span><div class="body"><div class="t">Configure SQL Server integrated auth</div><div class="s">vault keytab + odbcinst.ini</div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="margin-top: 28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px;">trimmed playbook (for shape, not depth)</h4>
+<pre><span class="y">- </span><span class="k">name:</span> <span class="s">Provision GitLab Linux runner tooling</span>
+  <span class="k">hosts:</span> gitlab_runners_linux
+  <span class="k">become:</span> <span class="n">yes</span>
+  <span class="k">vars_files:</span>
+    <span class="y">- </span>../vault/runner_secrets.yml   <span class="c"># encrypted with ansible-vault</span>
+  <span class="k">tasks:</span>
+    <span class="y">- </span><span class="k">name:</span> <span class="s">Install podman and tools</span>
+      <span class="k">ansible.builtin.dnf:</span>
+        <span class="k">name:</span> [podman, podman-docker, skopeo]
+        <span class="k">state:</span> <span class="n">present</span>
+
+    <span class="y">- </span><span class="k">name:</span> <span class="s">Pull internal tools image</span>
+      <span class="k">containers.podman.podman_image:</span>
+        <span class="k">name:</span> <span class="s">"{{ tools_image }}"</span>
+
+    <span class="y">- </span><span class="k">name:</span> <span class="s">Render krb5.conf</span>
+      <span class="k">ansible.builtin.template:</span>
+        <span class="k">src:</span> krb5.conf.j2
+        <span class="k">dest:</span> /etc/krb5.conf
+      <span class="k">notify:</span> restart sssd
+
+    <span class="y">- </span><span class="k">name:</span> <span class="s">Drop service-account keytab</span>
+      <span class="k">ansible.builtin.copy:</span>
+        <span class="k">content:</span> <span class="s">"{{ sql_svc_keytab_b64 | b64decode }}"</span>
+        <span class="k">dest:</span> /etc/krb5.keytab
+        <span class="k">mode:</span> <span class="s">"0600"</span>
+      <span class="k">no_log:</span> <span class="n">true</span></pre>
+      </div>
+
+      <!-- tripwire -->
+      <div class="tab-panel" data-panel="tripwire">
+        <div class="uc-grid">
+          <div class="uc-prose">
+            <h3 style="font-size:22px;font-family:var(--font-display);">One Tripwire baseline, two operating systems</h3>
+            <div class="meta"><span>linux + windows</span><span>identical FIM policy</span></div>
+            <p>The same playbook fans out to <code>tripwire_linux</code> and <code>tripwire_windows</code> roles. The OS-specific module names hide behind the role boundary &mdash; the play layer expresses one intent: every server in scope reaches the same baseline.</p>
+            <p style="font-size:13px; color:var(--dim);">When auditors ask "show me what enforces FIM across both estates" you point at one repo, one playbook, one merge process.</p>
+          </div>
+          <div class="stage" style="margin: 0;">
+            <div class="stage-title" style="margin-bottom: 12px;">single playbook, two fans</div>
+            <div style="background:var(--panel-2); border:1px solid rgba(124,92,255,0.4); border-radius:10px; padding:12px 16px; margin-bottom:14px; text-align:center;">
+              <div style="font-family:var(--font-mono); font-size:13px; color:var(--acc-1);">tripwire_baseline.yml</div>
+              <div style="font-size:11px; color:var(--dim); margin-top:2px;">single source of truth</div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div class="panel tinted-teal" style="padding:12px;">
+                <div style="font-size:12px; color:var(--acc-2); font-weight:500;">linux fleet</div>
+                <div style="font-size:11px; color:var(--dim); margin-top:2px;">RHEL, Ubuntu &mdash; SSH</div>
+                <div style="font-size:11px; color:var(--text-2); margin-top:8px; font-family:var(--font-mono);">role: tripwire_linux</div>
+              </div>
+              <div class="panel tinted-purple" style="padding:12px;">
+                <div style="font-size:12px; color:var(--acc-1); font-weight:500;">windows fleet</div>
+                <div style="font-size:11px; color:var(--dim); margin-top:2px;">2019, 2022 &mdash; WinRM</div>
+                <div style="font-size:11px; color:var(--text-2); margin-top:8px; font-family:var(--font-mono);">role: tripwire_axon</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="margin-top: 28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px;">the only file the auditor needs to read</h4>
+<pre><span class="y">- </span><span class="k">name:</span> <span class="s">Apply Tripwire baseline to linux</span>
+  <span class="k">hosts:</span> tripwire_linux
+  <span class="k">become:</span> <span class="n">yes</span>
+  <span class="k">roles:</span>
+    <span class="y">- </span><span class="k">role:</span> tripwire_linux
+      <span class="k">vars:</span>
+        <span class="k">tw_policy_src:</span> files/policies/bank_tw_v3.pol
+
+<span class="y">- </span><span class="k">name:</span> <span class="s">Apply Tripwire baseline to windows</span>
+  <span class="k">hosts:</span> tripwire_windows
+  <span class="k">roles:</span>
+    <span class="y">- </span><span class="k">role:</span> tripwire_axon
+      <span class="k">vars:</span>
+        <span class="k">te_console:</span> tw-console.bank.intra
+        <span class="k">te_policy_id:</span> BANK-PROD-V3</pre>
+      </div>
+
+      <!-- patch management -->
+      <div class="tab-panel" data-panel="patch">
+        <div class="uc-prose" style="margin-bottom: 20px;">
+          <h3 style="font-size:22px;font-family:var(--font-display);">Rolling patch deployment &mdash; 5% at a time, no human in the loop</h3>
+          <div class="meta"><span>monthly cadence</span><span>maintenance window aware</span><span>auto-drain from LB</span></div>
+          <p>Ansible's <code>serial: 5%</code> + <code>max_fail_percentage: 1</code> let you patch hundreds of servers safely. Each batch drains from the load balancer, applies updates, reboots if the kernel changed, and only rejoins once the health check passes.</p>
+        </div>
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">100-server fleet &mdash; click to roll a kernel patch</div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn ghost" id="patchReset">reset</button>
+              <button class="btn" id="patchRun">patch fleet</button>
+            </div>
+          </div>
+          <div class="progress"><div class="bar" id="patchBar"></div></div>
+          <div class="patch-fleet" id="patchFleet"></div>
+          <div class="patch-legend">
+            <div class="lg"><span class="sw" style="background:var(--panel-2)"></span>idle</div>
+            <div class="lg"><span class="sw" style="background:var(--acc-4)"></span>draining from LB</div>
+            <div class="lg"><span class="sw" style="background:var(--acc-1)"></span>patching</div>
+            <div class="lg"><span class="sw" style="background:var(--acc-6)"></span>rebooting</div>
+            <div class="lg"><span class="sw" style="background:var(--acc-2)"></span>health check</div>
+            <div class="lg"><span class="sw" style="background:var(--acc-3)"></span>back in service</div>
+          </div>
+        </div>
+        <p style="font-size:13px; color:var(--dim); margin-top: 18px;">In a real bank: each "batch" is also gated by <code>any_errors_fatal</code>, monitoring webhook callbacks, and a pre-task that confirms the maintenance window is open in ServiceNow.</p>
+      </div>
+
+      <!-- CIS hardening -->
+      <div class="tab-panel" data-panel="cis">
+        <div class="uc-prose" style="margin-bottom: 20px;">
+          <h3 style="font-size:22px;font-family:var(--font-display);">CIS &amp; STIG hardening &mdash; same playbook for audit and remediation</h3>
+          <div class="meta"><span>quarterly compliance</span><span>SOX + PCI-DSS evidence</span><span>--check mode for audit</span></div>
+          <p>Run the playbook with <code>--check</code> to see what would change &mdash; that's your audit report. Run it without <code>--check</code> to remediate. Same code, two purposes. Click "remediate" to watch the failing controls flip green.</p>
+        </div>
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title"><code>CIS RHEL 9 Benchmark v2.0</code> &mdash; sample results from one host</div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn ghost" id="cisReset">reset</button>
+              <button class="btn" id="cisRemediate">remediate</button>
+            </div>
+          </div>
+          <div class="cis-grid" id="cisGrid"></div>
+          <div style="margin-top:14px; padding:12px 14px; background:var(--panel-3); border-radius:8px; border:1px solid var(--border); font-family:var(--font-mono); font-size:12px; color:var(--text-2);">
+            <span id="cisSummary">12 controls assessed &mdash; <span style="color:#88e0a3">9 pass</span>, <span style="color:#ffa3a3">3 fail</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- cert rotation -->
+      <div class="tab-panel" data-panel="cert">
+        <div class="uc-prose" style="margin-bottom: 20px;">
+          <h3 style="font-size:22px;font-family:var(--font-display);">Certificate rotation across the fleet</h3>
+          <div class="meta"><span>internal CA roll</span><span>JVM truststore + nginx + IIS</span><span>handler-driven restarts</span></div>
+          <p>When the internal CA cert rolls, one playbook pushes the new bundle to <code>/etc/pki/</code>, the JVM truststore, the IIS personal store, and the CockroachDB cert directory. Handlers restart only the services whose configs actually changed.</p>
+        </div>
+
+        <div class="cert-timeline">
+          <div class="stage-title">cert expiry runway across the estate</div>
+          <div class="cert-axis">
+            <div class="cert-marker" style="left:8%"><div class="pin"></div><div class="lbl">today</div></div>
+            <div class="cert-marker crit" style="left:18%"><div class="pin"></div><div class="lbl">internal CA &mdash; 14d</div></div>
+            <div class="cert-marker warn" style="left:38%"><div class="pin"></div><div class="lbl">api-gw &mdash; 45d</div></div>
+            <div class="cert-marker warn" style="left:55%"><div class="pin"></div><div class="lbl">teller-svc &mdash; 60d</div></div>
+            <div class="cert-marker" style="left:80%"><div class="pin"></div><div class="lbl">core-banking &mdash; 110d</div></div>
+          </div>
+          <div class="cert-axis-labels">
+            <span>today</span><span>30d</span><span>60d</span><span>90d</span><span>120d</span>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">16 hosts hold the expiring CA cert</div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn ghost" id="certReset">reset</button>
+              <button class="btn" id="certRotate">ansible-playbook rotate_ca.yml</button>
+            </div>
+          </div>
+          <div class="cert-fleet" id="certFleet"></div>
+          <div style="margin-top:14px; font-size:12px; color:var(--dim); font-family:var(--font-mono);" id="certLog">awaiting rotation &mdash; 16 hosts pending</div>
+        </div>
+      </div>
+
+      <!-- keytab rotation -->
+      <div class="tab-panel" data-panel="keytab">
+        <div class="uc-prose" style="margin-bottom: 20px;">
+          <h3 style="font-size:22px;font-family:var(--font-display);">Keytab &amp; secrets rotation, sourced live from Vault</h3>
+          <div class="meta"><span>quarterly rotation</span><span>community.hashi_vault lookup</span><span>no human ever sees the secret</span></div>
+          <p>The new keytab or service-account password flows from HashiCorp Vault into the playbook as a runtime lookup, gets pushed to the host, and triggers the right service restart. The old credential is invalidated centrally; the new one never touches a human's screen.</p>
+        </div>
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">vault &rarr; 6 services across the fleet</div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn ghost" id="vaultReset">reset</button>
+              <button class="btn" id="vaultRotate">rotate secrets</button>
+            </div>
+          </div>
+          <div class="vault-stage">
+            <div class="vault-vault">VAULT</div>
+            <div class="vault-conduit" id="vaultConduit"></div>
+            <div class="vault-svr-col" id="vaultSvrs">
+              <div class="vault-svr" data-i="0">sql-runner-01 <span class="check">✓</span></div>
+              <div class="vault-svr" data-i="1">sql-runner-02 <span class="check">✓</span></div>
+              <div class="vault-svr" data-i="2">sso-broker-01 <span class="check">✓</span></div>
+              <div class="vault-svr" data-i="3">sso-broker-02 <span class="check">✓</span></div>
+              <div class="vault-svr" data-i="4">core-app-tier-1 <span class="check">✓</span></div>
+              <div class="vault-svr" data-i="5">core-app-tier-2 <span class="check">✓</span></div>
+            </div>
+          </div>
+          <div style="margin-top:14px; font-size:12px; color:var(--dim); font-family:var(--font-mono);" id="vaultLog">idle</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== NEXT STEPS ============== -->
+  <section class="section">
+    <div class="container">
+      <span class="sec-eyebrow">where to go from here</span>
+      <h2>Two suggestions for next session</h2>
+      <div class="grid grid-2" style="margin-top: 24px;">
+        <div class="card">
+          <h3 class="card-title">Build one role end-to-end</h3>
+          <p>Pick the GitLab runner playbook above and turn it into a proper role with <code>defaults/</code>, <code>tasks/</code>, <code>templates/</code>, <code>handlers/</code>. Add a <code>molecule/</code> scenario that runs it against an ephemeral container so every commit is tested.</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Wire it into the GitLab pipeline</h3>
+          <p>Trigger Ansible from a downstream pipeline after Terraform succeeds. Use <code>--check --diff</code> on merge requests for safe previews; <code>ansible-playbook</code> for real runs after approval.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>© <span id="year"></span> my-learnings · built static · no tracking</div>
+      <div><a href="../">home</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+  <script>
+  /* ============== ARCHITECTURE click ============== */
+  (function() {
+    const detail = document.getElementById('archDetail');
+    const rows = document.querySelectorAll('.row[data-target]');
+    const content = {
+      linux: '<strong style="color:var(--acc-2)">SSH (port 22)</strong> &mdash; ansible copies a tiny python module file to <span class="k">/tmp/.ansible/tmp/&hellip;</span>, executes it, captures json output, deletes it. uses key-based auth and an unprivileged service account that has <span class="k">sudo</span> for the few commands required. typical modules: <span class="k">dnf</span>, <span class="k">copy</span>, <span class="k">template</span>, <span class="k">systemd</span>, <span class="k">user</span>.',
+      windows: '<strong style="color:var(--acc-2)">WinRM (5985 / 5986)</strong> &mdash; ansible negotiates kerberos or ntlm, then runs powershell snippets remotely. no agent. typical modules: <span class="k">win_feature</span>, <span class="k">win_chocolatey</span>, <span class="k">win_template</span>, <span class="k">win_service</span>, <span class="k">win_regedit</span>. for tripwire you call <span class="k">win_package</span> against a UNC path msi.',
+      api: '<strong style="color:var(--acc-2)">HTTPS API</strong> &mdash; for switches, vCenter, AWS, Azure, etcd, etc., ansible runs the module on the control node itself and talks to the target\'s rest api. modules look like <span class="k">amazon.aws.ec2_instance</span>, <span class="k">community.vmware.vmware_guest</span>, <span class="k">cisco.ios.ios_config</span>.'
+    };
+    rows.forEach(r => {
+      r.addEventListener('click', () => {
+        rows.forEach(x => x.classList.remove('active'));
+        r.classList.add('active');
+        detail.innerHTML = content[r.dataset.target];
+      });
+    });
+  })();
+
+  /* ============== IDEMPOTENCE simulator ============== */
+  (function() {
+    const fleet = document.getElementById('simFleet');
+    const log = document.getElementById('simLog');
+    const okEl = document.getElementById('simOk');
+    const chEl = document.getElementById('simChanged');
+    const fEl = document.getElementById('simFailed');
+    const rEl = document.getElementById('simRuns');
+    const btn = document.getElementById('simRun');
+    const reset = document.getElementById('simReset');
+    let runs = 0;
+    const N = 5;
+    const installed = new Array(N).fill(false);
+
+    function build() {
+      fleet.innerHTML = '';
+      for (let i = 0; i < N; i++) {
+        const d = document.createElement('div');
+        d.className = 'cell';
+        d.innerHTML = '<div class="label">srv-0' + (i+1) + '</div><div class="state">empty</div>';
+        fleet.appendChild(d);
+      }
+    }
+
+    function setState(i, cls, txt) {
+      const s = fleet.children[i];
+      s.className = 'cell ' + cls;
+      s.querySelector('.state').textContent = txt;
+    }
+
+    function addLog(text, cls) {
+      const l = document.createElement('div');
+      l.className = 'l ' + (cls || '');
+      l.textContent = text;
+      log.appendChild(l);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function run() {
+      btn.disabled = true;
+      runs += 1;
+      rEl.textContent = runs;
+      addLog('');
+      addLog('PLAY [Configure linux runners] *********************************', 'sk');
+      addLog('TASK [Gathering facts] *****************************************', 'sk');
+      await sleep(300);
+      addLog('TASK [Ensure podman is installed] ******************************', 'sk');
+
+      let ok = 0, ch = 0;
+      for (let i = 0; i < N; i++) {
+        setState(i, 'checking', 'checking');
+        await sleep(160);
+        if (installed[i]) {
+          setState(i, 'skip', 'ok');
+          addLog('ok: [srv-0' + (i+1) + '] => podman already at desired state', 'sk');
+          ok += 1;
+        } else {
+          setState(i, 'changing', 'installing');
+          await sleep(280);
+          installed[i] = true;
+          setState(i, 'ok', 'installed');
+          addLog('changed: [srv-0' + (i+1) + '] => podman-5.2.3-1.el9 installed', 'ch');
+          ch += 1;
+        }
+      }
+      okEl.textContent = ok;
+      chEl.textContent = ch;
+      addLog('PLAY RECAP *****************************************************', 'sk');
+      for (let i = 0; i < N; i++) {
+        const tag = ch > 0 && i < ch ? 'changed=1' : 'changed=0';
+        addLog('srv-0' + (i+1) + ' : ok=1  ' + tag + '  failed=0', ch > 0 && installed[i] && runs === 1 ? 'ch' : 'ok');
+      }
+      btn.disabled = false;
+      btn.textContent = runs === 0 ? 'run playbook' : 're-run playbook';
+    }
+
+    function doReset() {
+      runs = 0;
+      installed.fill(false);
+      okEl.textContent = '0';
+      chEl.textContent = '0';
+      fEl.textContent = '0';
+      rEl.textContent = '0';
+      log.innerHTML = '<div class="l sk">PLAY [Configure linux runners] *********************************</div>';
+      btn.textContent = 'run playbook';
+      build();
+    }
+
+    build();
+    btn.addEventListener('click', run);
+    reset.addEventListener('click', doReset);
+  })();
+
+  /* ============== DRIFT simulator ============== */
+  (function() {
+    const tfVm = document.getElementById('tfVm');
+    const anVm = document.getElementById('anVm');
+    const tfDt = document.getElementById('tfDowntime');
+    const anDt = document.getElementById('anDowntime');
+    const tfFix = document.getElementById('tfFix');
+    const anFix = document.getElementById('anFix');
+    const inj = document.getElementById('driftInject');
+    const reset = document.getElementById('driftReset');
+
+    function setVm(el, cls, state, detail) {
+      el.className = 'drift-vm ' + cls;
+      el.querySelector('.vm-state').textContent = state;
+      el.querySelector('.vm-detail').textContent = detail;
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    inj.addEventListener('click', () => {
+      setVm(tfVm, 'drifted', 'drifted', 'schema v2 detected — out of band edit');
+      setVm(anVm, 'drifted', 'drifted', 'schema v2 detected — out of band edit');
+      tfFix.disabled = false;
+      anFix.disabled = false;
+      inj.disabled = true;
+    });
+
+    tfFix.addEventListener('click', async () => {
+      tfFix.disabled = true;
+      setVm(tfVm, 'destroying', 'destroying', 'terraform plan: -1 +1 instance');
+      let dt = 0;
+      const t = setInterval(() => { dt += 1; tfDt.textContent = dt + 's'; }, 100);
+      await sleep(1400);
+      setVm(tfVm, 'gone', 'destroyed', 'instance terminated, EBS snapshotted');
+      await sleep(1200);
+      setVm(tfVm, 'rebuilding', 'rebuilding', 'launching new instance from AMI…');
+      await sleep(1800);
+      clearInterval(t);
+      tfDt.textContent = (dt + 4) + 's';
+      setVm(tfVm, 'healed', 'healthy', 'schema v3, in service (rebuilt)');
+    });
+
+    anFix.addEventListener('click', async () => {
+      anFix.disabled = true;
+      setVm(anVm, 'fixing', 'reconciling', 'ansible-playbook fix.yml --check passed');
+      let dt = 0;
+      const t = setInterval(() => { dt += 1; anDt.textContent = dt + 's'; }, 100);
+      await sleep(900);
+      clearInterval(t);
+      anDt.textContent = '0s';
+      setVm(anVm, 'healed', 'healthy', 'schema v3, in service (in place)');
+    });
+
+    reset.addEventListener('click', () => {
+      setVm(tfVm, '', 'healthy', 'schema v3, in service');
+      setVm(anVm, '', 'healthy', 'schema v3, in service');
+      tfDt.textContent = '0s';
+      anDt.textContent = '0s';
+      tfFix.disabled = true;
+      anFix.disabled = true;
+      inj.disabled = false;
+    });
+  })();
+
+  /* ============== TABS ============== */
+  (function() {
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.tab-panel');
+    tabs.forEach(t => {
+      t.addEventListener('click', () => {
+        tabs.forEach(x => x.classList.remove('active'));
+        panels.forEach(p => p.classList.remove('active'));
+        t.classList.add('active');
+        document.querySelector('.tab-panel[data-panel="' + t.dataset.tab + '"]').classList.add('active');
+      });
+    });
+  })();
+
+  /* ============== PATCH rolling ============== */
+  (function() {
+    const fleet = document.getElementById('patchFleet');
+    const bar = document.getElementById('patchBar');
+    const btn = document.getElementById('patchRun');
+    const reset = document.getElementById('patchReset');
+    const N = 100;
+
+    function build() {
+      fleet.innerHTML = '';
+      for (let i = 0; i < N; i++) {
+        const d = document.createElement('div');
+        d.className = 'patch-srv';
+        fleet.appendChild(d);
+      }
+      bar.style.width = '0%';
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function run() {
+      btn.disabled = true;
+      const batchSize = 5;
+      const batches = N / batchSize;
+      for (let b = 0; b < batches; b++) {
+        const idx = [];
+        for (let k = 0; k < batchSize; k++) idx.push(b * batchSize + k);
+        idx.forEach(i => fleet.children[i].className = 'patch-srv draining');
+        await sleep(180);
+        idx.forEach(i => fleet.children[i].className = 'patch-srv patching');
+        await sleep(280);
+        idx.forEach(i => fleet.children[i].className = 'patch-srv rebooting');
+        await sleep(220);
+        idx.forEach(i => fleet.children[i].className = 'patch-srv returning');
+        await sleep(160);
+        idx.forEach(i => fleet.children[i].className = 'patch-srv healthy');
+        bar.style.width = (((b + 1) / batches) * 100) + '%';
+      }
+      btn.disabled = false;
+    }
+
+    build();
+    btn.addEventListener('click', run);
+    reset.addEventListener('click', build);
+  })();
+
+  /* ============== CIS hardening ============== */
+  (function() {
+    const grid = document.getElementById('cisGrid');
+    const summary = document.getElementById('cisSummary');
+    const btn = document.getElementById('cisRemediate');
+    const reset = document.getElementById('cisReset');
+
+    const controls = [
+      {id: '1.1.1', name: 'cramfs filesystem disabled', fail: false},
+      {id: '1.4.1', name: 'bootloader password set', fail: true},
+      {id: '2.2.4', name: 'X Window System not installed', fail: false},
+      {id: '3.3.1', name: 'IPv6 source routing disabled', fail: false},
+      {id: '4.2.1', name: 'rsyslog installed and active', fail: false},
+      {id: '5.1.1', name: 'cron daemon enabled', fail: false},
+      {id: '5.2.5', name: 'sshd root login disabled', fail: true},
+      {id: '5.4.1', name: 'password expiration ≤ 90 days', fail: false},
+      {id: '5.6.1', name: 'tmp mounted with nosuid,nodev', fail: true},
+      {id: '6.1.2', name: '/etc/passwd permissions 644', fail: false},
+      {id: '6.2.1', name: 'no UID 0 accounts other than root', fail: false},
+      {id: '6.3.1', name: 'audit logs not group-writeable', fail: false},
+    ];
+
+    function build() {
+      grid.innerHTML = '';
+      controls.forEach(c => {
+        const d = document.createElement('div');
+        d.className = 'cis-row ' + (c.fail ? 'fail' : 'pass');
+        d.innerHTML = '<span class="id">' + c.id + '</span><span class="name">' + c.name + '</span><span class="stat">' + (c.fail ? 'fail' : 'pass') + '</span>';
+        grid.appendChild(d);
+      });
+      summary.innerHTML = '12 controls assessed &mdash; <span style="color:#88e0a3">9 pass</span>, <span style="color:#ffa3a3">3 fail</span>';
+    }
+
+    async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function remediate() {
+      btn.disabled = true;
+      const failing = Array.from(grid.children).filter(r => r.classList.contains('fail'));
+      for (const r of failing) {
+        r.className = 'cis-row fix';
+        r.querySelector('.stat').textContent = 'remediating…';
+        await sleep(700);
+        r.className = 'cis-row pass';
+        r.querySelector('.stat').textContent = 'pass';
+      }
+      summary.innerHTML = '12 controls assessed &mdash; <span style="color:#88e0a3">12 pass</span>, <span style="color:#88e0a3">0 fail</span>';
+      btn.disabled = false;
+    }
+
+    build();
+    btn.addEventListener('click', remediate);
+    reset.addEventListener('click', () => { build(); btn.disabled = false; });
+  })();
+
+  /* ============== CERT rotation ============== */
+  (function() {
+    const fleet = document.getElementById('certFleet');
+    const log = document.getElementById('certLog');
+    const btn = document.getElementById('certRotate');
+    const reset = document.getElementById('certReset');
+    const N = 16;
+
+    function build() {
+      fleet.innerHTML = '';
+      for (let i = 0; i < N; i++) {
+        const d = document.createElement('div');
+        d.className = 'cert-srv';
+        fleet.appendChild(d);
+      }
+      log.textContent = 'awaiting rotation — 16 hosts pending';
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function rotate() {
+      btn.disabled = true;
+      let done = 0;
+      for (let i = 0; i < N; i++) {
+        await sleep(110);
+        fleet.children[i].classList.add('rotated');
+        done += 1;
+        log.textContent = 'pushed CA bundle to ' + done + '/' + N + ' hosts — handlers restarting affected services only';
+      }
+      log.textContent = 'rotation complete — 16/16 hosts on new CA bundle, 4 services restarted via handlers';
+      btn.disabled = false;
+    }
+
+    build();
+    btn.addEventListener('click', rotate);
+    reset.addEventListener('click', () => { build(); btn.disabled = false; });
+  })();
+
+  /* ============== VAULT keytab rotation ============== */
+  (function() {
+    const conduit = document.getElementById('vaultConduit');
+    const svrs = document.querySelectorAll('.vault-svr');
+    const log = document.getElementById('vaultLog');
+    const btn = document.getElementById('vaultRotate');
+    const reset = document.getElementById('vaultReset');
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function pulse(targetEl) {
+      const stage = document.querySelector('.vault-stage').getBoundingClientRect();
+      const conRect = conduit.getBoundingClientRect();
+      const tRect = targetEl.getBoundingClientRect();
+      const yStart = (stage.top + stage.height / 2) - conRect.top;
+      const yEnd = (tRect.top + tRect.height / 2) - conRect.top;
+      const xEnd = conRect.width;
+
+      const p = document.createElement('div');
+      p.className = 'vault-pulse';
+      p.style.left = '0px';
+      p.style.top = yStart + 'px';
+      p.style.opacity = '1';
+      p.style.transition = 'all 800ms cubic-bezier(.5,0,.2,1)';
+      conduit.appendChild(p);
+      await sleep(20);
+      p.style.left = xEnd + 'px';
+      p.style.top = yEnd + 'px';
+      await sleep(800);
+      p.remove();
+    }
+
+    async function rotate() {
+      btn.disabled = true;
+      log.textContent = 'fetching new keytab from vault → kv/secret/ad/sql_svc';
+      await sleep(400);
+      for (let i = 0; i < svrs.length; i++) {
+        log.textContent = 'pushing rotated credential to ' + svrs[i].childNodes[0].textContent.trim();
+        await pulse(svrs[i]);
+        svrs[i].classList.add('rotated');
+        await sleep(120);
+      }
+      log.textContent = 'rotation complete — 6/6 services updated, old credential invalidated centrally';
+      btn.disabled = false;
+    }
+
+    btn.addEventListener('click', rotate);
+    reset.addEventListener('click', () => {
+      svrs.forEach(s => s.classList.remove('rotated'));
+      log.textContent = 'idle';
+      btn.disabled = false;
+    });
+  })();
+  </script>
+</body>
+</html>
