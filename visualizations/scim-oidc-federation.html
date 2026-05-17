@@ -116,6 +116,123 @@
     .role-card.dev    { border-left: 3px solid var(--dim); }
     .role-card h4 { font-family: var(--font-display); font-weight: 700; font-size: 15px; color: var(--text-strong); margin-bottom: 6px; }
     .role-card p  { font-size: 13px; color: var(--text-2); line-height: 1.6; margin: 0; }
+
+    /* ------------------------------------------------------------
+       PKCE handshake widget — sequence diagram via CSS grid.
+       Three columns: GitHub Client | Browser | Entra IdP.
+       Step rows reveal one at a time; verifier pin sticks to GH col.
+       ------------------------------------------------------------ */
+    .pkce-demo { display: flex; flex-direction: column; gap: 10px; }
+
+    .pkce-actors {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px; padding-bottom: 4px;
+    }
+    .pkce-actor {
+      text-align: center; padding: 12px 8px;
+      border-radius: var(--radius); background: var(--panel-2);
+      border: 1px solid var(--border-2);
+    }
+    .pkce-actor .name { font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--text-strong); }
+    .pkce-actor .role { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); margin-top: 4px; }
+    .pkce-actor.gh   { border-top: 2px solid var(--acc-3); }
+    .pkce-actor.brw  { border-top: 2px solid var(--acc-4); }
+    .pkce-actor.idp  { border-top: 2px solid var(--acc-1); }
+
+    .pkce-pin-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .pkce-verifier-pin {
+      grid-column: 1; display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-radius: var(--radius);
+      background: var(--acc-4-soft); border: 1px solid var(--acc-4);
+      font-family: var(--font-mono); font-size: 11px; color: var(--acc-4);
+      transition: opacity 400ms;
+    }
+    .pkce-verifier-pin strong { color: var(--acc-4); }
+
+    .pkce-steps { display: flex; flex-direction: column; gap: 6px; }
+    .pkce-step {
+      display: grid; grid-template-columns: 30px 1fr 1fr 1fr;
+      gap: 8px; align-items: center;
+      padding: 8px 10px;
+      border: 1px solid transparent; border-radius: var(--radius);
+      opacity: 0.22; transition: opacity 300ms, background 300ms, border-color 300ms;
+    }
+    .pkce-step.done   { opacity: 0.7; }
+    .pkce-step.active { opacity: 1; background: var(--panel-2); border-color: var(--acc-1); }
+    .pkce-step.attack.active { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .pkce-step.hidden { display: none; }
+
+    .pkce-letter {
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--panel); color: var(--dim);
+      border: 1px solid var(--border-2);
+    }
+    .pkce-step.done .pkce-letter   { background: var(--acc-1-soft); color: var(--acc-1); border-color: var(--acc-1); }
+    .pkce-step.active .pkce-letter { background: var(--acc-1); color: var(--text-strong); border-color: var(--acc-1); }
+    .pkce-step.attack .pkce-letter { background: var(--panel); color: var(--acc-5); border-color: var(--acc-5); }
+    .pkce-step.attack.active .pkce-letter { background: var(--acc-5); color: var(--text-strong); }
+
+    .pkce-cell {
+      padding: 8px 12px; border-radius: var(--radius);
+      font-size: 12px; line-height: 1.5;
+      background: var(--panel); border: 1px solid var(--border);
+      color: var(--text-2);
+    }
+    .pkce-cell.empty { background: transparent; border: 1px dashed transparent; }
+    .pkce-cell.op-gh  { border-left: 2px solid var(--acc-3); }
+    .pkce-cell.op-idp { border-left: 2px solid var(--acc-1); }
+    .pkce-cell.op-brw { border-left: 2px solid var(--acc-4); }
+    .pkce-cell.danger { border-left: 2px solid var(--acc-5); color: var(--acc-5); }
+    .pkce-cell.success { border-left: 2px solid var(--acc-3); color: var(--acc-3); }
+
+    .pkce-msg {
+      padding: 8px 12px; border-radius: var(--radius);
+      font-size: 12px; line-height: 1.5;
+      color: var(--text); background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .pkce-msg .arrow {
+      display: block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .pkce-msg.via-brw .arrow  { color: var(--acc-4); }
+    .pkce-msg.vuln            { border-top: 2px solid var(--acc-5); }
+    .pkce-msg.vuln .arrow     { color: var(--acc-5); }
+    .pkce-msg.back-ch         { border-top: 2px solid var(--acc-6); background: var(--acc-6-soft); }
+    .pkce-msg.back-ch .arrow  { color: var(--acc-6); }
+    .pkce-msg.success         { border-top: 2px solid var(--acc-3); }
+    .pkce-msg.success .arrow  { color: var(--acc-3); }
+    .pkce-msg.span-3 { grid-column: span 3; }
+
+    .pkce-status {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 14px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .pkce-status .progress {
+      font-family: var(--font-mono); font-size: 11px; color: var(--dim);
+      letter-spacing: 0.08em;
+    }
+    .pkce-status .msg { color: var(--text-2); }
+    .pkce-status.attack-mode .msg { color: var(--acc-5); }
+
+    /* Attacker toggle button — accent when active */
+    .btn.attacker-on {
+      background: var(--acc-5); border-color: var(--acc-5); color: var(--text-strong);
+    }
+
+    @media (max-width: 720px) {
+      .pkce-actors { grid-template-columns: 1fr; }
+      .pkce-actor { text-align: left; }
+      .pkce-pin-row { grid-template-columns: 1fr; }
+      .pkce-step { grid-template-columns: 26px 1fr; }
+      .pkce-cell.empty { display: none; }
+      .pkce-msg.span-3 { grid-column: 2; }
+    }
   </style>
 </head>
 <body>
@@ -305,22 +422,126 @@
         <div class="stage" style="margin-top: 20px;">
           <div class="stage-toolbar">
             <div class="stage-title">PKCE handshake &mdash; <code>code_verifier</code> vs <code>code_challenge</code></div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>simulate attacker</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="pkceReset">reset</button>
+              <button class="btn ghost" id="pkceAttack">simulate attacker</button>
+              <button class="btn ghost" id="pkceStep">step</button>
+              <button class="btn" id="pkcePlay">play</button>
             </div>
           </div>
-          <div class="stage-placeholder">
-            <strong>What the animation will show:</strong>
-            <ol>
-              <li>GitHub generates <code>code_verifier</code> (a 128-char random secret) and keeps it locally.</li>
-              <li>GitHub computes <code>code_challenge = SHA256(code_verifier)</code> and sends only the challenge in the auth request.</li>
-              <li>Entra stores the challenge. The auth code returns through the browser &mdash; the moment when interception is possible.</li>
-              <li>On the back-channel token exchange, GitHub sends the original <code>code_verifier</code>. Entra re-hashes it and compares.</li>
-              <li>If an attacker intercepted the auth code at step 3, they can't complete step 4 &mdash; they don't have the verifier (it never left GitHub's server).</li>
-            </ol>
-            <p>The interactive version will let you toggle an "attacker intercepts code" scenario and watch the token request fail with a verifier mismatch.</p>
+
+          <div class="pkce-demo">
+            <div class="pkce-actors">
+              <div class="pkce-actor gh">
+                <div class="name">GitHub EMU</div>
+                <div class="role">OAuth Client</div>
+              </div>
+              <div class="pkce-actor brw">
+                <div class="name">Browser</div>
+                <div class="role">in transit</div>
+              </div>
+              <div class="pkce-actor idp">
+                <div class="name">Entra ID</div>
+                <div class="role">Auth Server</div>
+              </div>
+            </div>
+
+            <div class="pkce-pin-row">
+              <div class="pkce-verifier-pin" id="pkceVerifierPin" style="opacity:0;">
+                <strong>code_verifier</strong> &middot; stays on GitHub
+              </div>
+            </div>
+
+            <div class="pkce-steps" id="pkceSteps">
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">A</div>
+                <div class="pkce-cell op-gh">Generate <code>code_verifier</code> &mdash; random 128-char secret. Stays on GitHub's server.</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">B</div>
+                <div class="pkce-cell op-gh">Compute <code>code_challenge = SHA256(code_verifier)</code>.</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">C</div>
+                <div class="pkce-msg via-brw span-3">
+                  <span class="arrow">GitHub &rarr; Browser &rarr; Entra &middot; auth request</span>
+                  Carries <code>code_challenge</code> (the hash) plus <code>client_id</code>, <code>redirect_uri</code>, <code>state</code>. The verifier itself never leaves GitHub.
+                </div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">D</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell op-idp">Entra stores <code>code_challenge</code> for this session.</div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">E</div>
+                <div class="pkce-msg vuln span-3">
+                  <span class="arrow">Entra &rarr; Browser &rarr; GitHub &middot; auth code</span>
+                  Authorization code returns through the browser. <strong>Vulnerable window</strong> &mdash; could be intercepted here.
+                </div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell danger">Attacker captures the auth code from the browser.</div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-msg vuln span-3">
+                  <span class="arrow">Attacker &rarr; Entra &middot; token request (no verifier)</span>
+                  Attacker POSTs the stolen code to <code>/token</code>. They never had the verifier &mdash; it lived only on GitHub's server.
+                </div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell danger">Entra: <code>SHA256(?) !== stored challenge</code>. Reject. <strong>No tokens issued.</strong></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">F</div>
+                <div class="pkce-msg back-ch span-3">
+                  <span class="arrow">GitHub &rarr; Entra &middot; back-channel POST /token (bypasses browser)</span>
+                  Server-to-server over TLS. Carries auth code + <code>client_secret</code> + <code>code_verifier</code>. The verifier reaches Entra for the first time.
+                </div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">G</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell op-idp">Entra recomputes <code>SHA256(verifier)</code>. Matches the stored challenge.</div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">H</div>
+                <div class="pkce-msg success span-3">
+                  <span class="arrow">Entra &rarr; GitHub &middot; tokens</span>
+                  ID Token + Access Token + Refresh Token returned to the legitimate Client.
+                </div>
+              </div>
+
+            </div>
+
+            <div class="pkce-status" id="pkceStatus">
+              <span class="progress" id="pkceProgress">0 / 8</span>
+              <span class="msg" id="pkceMsg">Press <strong>play</strong> to walk through the handshake.</span>
+            </div>
           </div>
         </div>
 
@@ -656,10 +877,9 @@
     <section class="section">
       <div class="container">
         <span class="sec-eyebrow">where this page is going</span>
-        <h2>Interactive walkthroughs, landing one at a time</h2>
-        <p>This page is the reference layer. Six interactive demos will replace the placeholder stages above &mdash; in this order, by teaching value:</p>
+        <h2>More interactive walkthroughs, landing one at a time</h2>
+        <p>PKCE is live above. Five more demos will replace the remaining placeholder stages on this page, in this order:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>PKCE handshake (verifier vs challenge, with an attacker-intercept toggle)</li>
           <li>OIDC sequence diagram (play / step / reset)</li>
           <li>Conditional Access policy simulator (toggle signals, see decision)</li>
           <li>Termination timeline &mdash; the revocation gap and what CAE does to it</li>
@@ -679,5 +899,142 @@
   </footer>
 
   <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+
+  <script>
+    // PKCE handshake widget — sequence-diagram state machine
+    (function () {
+      const stepsRoot = document.getElementById('pkceSteps');
+      if (!stepsRoot) return;
+
+      const allSteps    = Array.from(stepsRoot.querySelectorAll('.pkce-step'));
+      const normalSteps = allSteps.filter(s => s.dataset.kind === 'normal');
+      const attackSteps = allSteps.filter(s => s.dataset.kind === 'attack');
+
+      const verifierPin = document.getElementById('pkceVerifierPin');
+      const progressEl  = document.getElementById('pkceProgress');
+      const msgEl       = document.getElementById('pkceMsg');
+      const statusEl    = document.getElementById('pkceStatus');
+
+      const playBtn   = document.getElementById('pkcePlay');
+      const stepBtn   = document.getElementById('pkceStep');
+      const resetBtn  = document.getElementById('pkceReset');
+      const attackBtn = document.getElementById('pkceAttack');
+
+      const normalCaptions = [
+        'GitHub generates the verifier locally — never sent to Entra.',
+        'Hash the verifier into a challenge. Only the hash will travel.',
+        'Auth request carries the challenge through the browser.',
+        'Entra stores the challenge for this session.',
+        'Auth code returns through the browser — the moment of risk.',
+        'Back-channel token exchange — verifier finally leaves GitHub.',
+        'Entra re-hashes the verifier and matches the stored challenge.',
+        'Match. Tokens issued to the legitimate Client.'
+      ];
+      const attackCaptions = [
+        'Attacker captures the auth code from the browser.',
+        'Attacker POSTs the code to /token — but has no verifier.',
+        'Entra rejects: hash mismatch. No tokens issued to the attacker.'
+      ];
+      const INITIAL_MSG = 'Press play to walk through the handshake.';
+
+      const STEP_INTERVAL_MS = 1100;
+      let visibleSteps = [];
+      let position = 0;
+      let attackMode = false;
+      let timer = null;
+
+      function rebuildVisible() {
+        if (attackMode) {
+          visibleSteps = [
+            ...normalSteps.slice(0, 5),  // A..E
+            ...attackSteps,              // X1, X2, X3
+            ...normalSteps.slice(5)      // F..H
+          ];
+        } else {
+          visibleSteps = [...normalSteps];
+        }
+        attackSteps.forEach(s => s.classList.toggle('hidden', !attackMode));
+      }
+
+      function render() {
+        visibleSteps.forEach((s, i) => {
+          s.classList.remove('active', 'done');
+          if (i < position - 1) s.classList.add('done');
+          else if (i === position - 1) s.classList.add('active');
+        });
+
+        verifierPin.style.opacity = position >= 1 ? '1' : '0';
+        progressEl.textContent = position + ' / ' + visibleSteps.length;
+
+        if (position === 0) {
+          statusEl.classList.remove('attack-mode');
+          msgEl.textContent = INITIAL_MSG;
+        } else {
+          captionFor(visibleSteps[position - 1]);
+        }
+      }
+
+      function captionFor(stepEl) {
+        const isAttack = stepEl.dataset.kind === 'attack';
+        statusEl.classList.toggle('attack-mode', isAttack);
+        if (isAttack) {
+          msgEl.textContent = attackCaptions[attackSteps.indexOf(stepEl)];
+        } else {
+          msgEl.textContent = normalCaptions[normalSteps.indexOf(stepEl)];
+        }
+      }
+
+      function advance() {
+        if (position >= visibleSteps.length) {
+          stopAuto();
+          return;
+        }
+        position += 1;
+        render();
+        if (position >= visibleSteps.length) stopAuto();
+      }
+
+      function startAuto() {
+        if (timer) return;
+        if (position >= visibleSteps.length) reset();
+        playBtn.textContent = 'pause';
+        advance();
+        timer = setInterval(advance, STEP_INTERVAL_MS);
+      }
+
+      function stopAuto() {
+        if (timer) { clearInterval(timer); timer = null; }
+        playBtn.textContent = position >= visibleSteps.length ? 'play again' : 'play';
+      }
+
+      function reset() {
+        stopAuto();
+        position = 0;
+        render();
+        playBtn.textContent = 'play';
+      }
+
+      function toggleAttack() {
+        stopAuto();
+        attackMode = !attackMode;
+        attackBtn.classList.toggle('attacker-on', attackMode);
+        attackBtn.textContent = attackMode ? 'attacker on' : 'simulate attacker';
+        position = 0;
+        rebuildVisible();
+        render();
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (timer) stopAuto();
+        else startAuto();
+      });
+      stepBtn.addEventListener('click', () => { stopAuto(); advance(); });
+      resetBtn.addEventListener('click', reset);
+      attackBtn.addEventListener('click', toggleAttack);
+
+      rebuildVisible();
+      render();
+    })();
+  </script>
 </body>
 </html>
