@@ -19,6 +19,13 @@ window.SITE_CONTENT = {
 
   visualizations: [
     {
+      title: "SCIM + OIDC identity federation — Entra ID to GitHub EMU",
+      slug: "scim-oidc-federation.html",
+      date: "2026-05-17",
+      summary: "Federating Microsoft Entra ID into GitHub Enterprise Managed Users — SCIM provisioning, OIDC + PKCE, Conditional Access, the revocation gap, FIDO2, and where SAML / WS-Fed sit alongside. Reference layer now; six interactive walkthroughs landing one at a time.",
+      tags: ["identity", "oidc", "scim", "security"]
+    },
+    {
       title: "Ansible — A Visual Primer for the Bank",
       slug: "ansible-visual-primer.html",
       date: "2026-05-15",

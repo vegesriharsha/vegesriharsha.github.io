@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCIM + OIDC identity federation — Entra ID to GitHub EMU — my-learnings</title>
+  <meta name="description" content="A reference for federating Microsoft Entra ID into GitHub Enterprise Managed Users — SCIM provisioning, OIDC + PKCE, Conditional Access, the revocation gap, FIDO2, and where SAML / WS-Fed sit alongside." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/components.css" />
+  <style>
+    /* ------------------------------------------------------------
+       Page-local patterns. Lift to components.css if reused.
+       ------------------------------------------------------------ */
+
+    /* Reference tables — glossary, dependency chain, grant types, failure modes */
+    .ref-table {
+      width: 100%; border-collapse: collapse; margin: 8px 0 4px;
+      font-size: 13px; color: var(--text);
+    }
+    .ref-table th {
+      text-align: left; font-family: var(--font-mono);
+      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); font-weight: 500;
+      padding: 10px 12px; border-bottom: 1px solid var(--border-2);
+    }
+    .ref-table td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+      vertical-align: top; line-height: 1.55;
+    }
+    .ref-table tr:hover td { background: var(--panel-2); }
+    .ref-table .mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-strong); white-space: nowrap; }
+    .ref-table .num  { font-family: var(--font-mono); font-size: 12px; color: var(--dim); text-align: right; width: 32px; }
+
+    /* Callouts — key / warn / info / good */
+    .callout {
+      padding: 12px 16px; border-radius: var(--radius);
+      font-size: 13px; line-height: 1.6; margin: 18px 0;
+      border-left: 3px solid var(--acc-1);
+      background: var(--acc-1-soft);
+    }
+    .callout.warn { border-color: var(--acc-5); background: var(--acc-5-soft); }
+    .callout.info { border-color: var(--acc-2); background: var(--acc-2-soft); }
+    .callout.good { border-color: var(--acc-3); background: var(--acc-3-soft); }
+    .callout strong { color: var(--text-strong); }
+
+    /* Badges used inside tables and stages */
+    .tag-badge {
+      display: inline-block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 10px;
+      background: var(--acc-1-soft); color: var(--acc-1);
+      border: 1px solid var(--acc-1);
+    }
+    .tag-badge.scim   { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+    .tag-badge.oidc   { background: var(--acc-3-soft); color: var(--acc-3); border-color: var(--acc-3); }
+    .tag-badge.both   { background: var(--acc-4-soft); color: var(--acc-4); border-color: var(--acc-4); }
+    .tag-badge.infra  { background: var(--panel-2); color: var(--dim); border-color: var(--border-2); }
+    .tag-badge.legacy { background: var(--panel-2); color: var(--dim); border-color: var(--border-2); }
+
+    /* Numbered flow steps — for the OIDC step list */
+    .flow-steps { counter-reset: step; padding: 0; list-style: none; margin: 16px 0; }
+    .flow-steps li {
+      counter-increment: step; position: relative;
+      padding: 12px 16px 12px 52px; margin-bottom: 6px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 13px; line-height: 1.55;
+    }
+    .flow-steps li::before {
+      content: counter(step); position: absolute;
+      left: 14px; top: 12px; width: 26px; height: 26px;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+      background: var(--acc-1-soft); color: var(--acc-1);
+    }
+    .flow-dir {
+      display: inline-block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.06em;
+      padding: 1px 7px; border-radius: 3px; margin-right: 6px;
+      background: var(--panel-2); color: var(--dim);
+      border: 1px solid var(--border-2);
+    }
+    .flow-dir.toidp    { background: var(--acc-2-soft); color: var(--acc-2); border-color: var(--acc-2); }
+    .flow-dir.toclient { background: var(--acc-1-soft); color: var(--acc-1); border-color: var(--acc-1); }
+    .flow-dir.server   { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+
+    /* Placeholder chip in stage toolbars for the 6 demos */
+    .stage-status {
+      font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--acc-4); padding: 3px 10px;
+      border: 1px dashed var(--acc-4); border-radius: 4px;
+    }
+    .stage-placeholder {
+      padding: 18px; background: var(--panel-3); border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; line-height: 1.7;
+      border: 1px dashed var(--border-2);
+    }
+    .stage-placeholder ol, .stage-placeholder ul { padding-left: 22px; margin: 8px 0; }
+    .stage-placeholder li { margin-bottom: 4px; }
+    .stage-placeholder code { font-family: var(--font-mono); font-size: 12px; color: var(--acc-1); }
+
+    /* Small inline-mono utility for token names etc. */
+    code { font-family: var(--font-mono); font-size: 0.92em; color: var(--acc-1); background: var(--acc-1-soft); padding: 1px 6px; border-radius: 3px; }
+
+    /* Role cards — for "GitHub EMU wears three hats" */
+    .role-card {
+      padding: 18px 20px; border-radius: var(--radius);
+      border: 1px solid var(--border); background: var(--panel);
+      margin-bottom: 12px;
+    }
+    .role-card.oidc   { border-left: 3px solid var(--acc-3); }
+    .role-card.scim   { border-left: 3px solid var(--acc-6); }
+    .role-card.dev    { border-left: 3px solid var(--dim); }
+    .role-card h4 { font-family: var(--font-display); font-weight: 700; font-size: 15px; color: var(--text-strong); margin-bottom: 6px; }
+    .role-card p  { font-size: 13px; color: var(--text-2); line-height: 1.6; margin: 0; }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../" style="text-decoration:none">
+        <div class="logo-top">my &middot; learnings</div>
+        <div class="logo-main">notes <span>&amp;</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../">Home</a>
+        <a href="../#posts">Notes</a>
+        <a href="../#viz" class="active">Visualizations</a>
+        <a href="../about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============== HERO ============== -->
+    <section class="hero">
+      <div class="container">
+        <h1>SCIM + OIDC <span>identity federation</span></h1>
+        <p>
+          A complete reference for federating Microsoft Entra ID into GitHub Enterprise Managed Users.
+          Two protocols, three actors, one set of edge cases &mdash; SCIM creates the account,
+          OIDC authenticates the human, and the gap between them is where every bad incident lives.
+        </p>
+        <div class="pills" style="margin-top: 18px;">
+          <span class="pill">OIDC</span>
+          <span class="pill teal">SCIM</span>
+          <span class="pill">PKCE</span>
+          <span class="pill teal">FIDO2</span>
+          <span class="pill">Conditional Access</span>
+          <span class="pill teal">SAML / WS-Fed</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== GLOSSARY ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">vocabulary first</span>
+        <h2>Acronym glossary</h2>
+        <p class="lead">The space is acronym-soup. Anchor these once and the rest of the page reads cleanly.</p>
+
+        <table class="ref-table">
+          <thead><tr><th>Acronym</th><th>Full name</th><th>Role in this architecture</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">SSO</td><td>Single Sign-On</td><td>The <em>goal</em>, not a protocol. Authenticate once, access many apps.</td></tr>
+            <tr><td class="mono">OAuth 2.0</td><td>Open Authorization 2.0</td><td>Authorization framework. Provides Access Tokens with scopes. Does <strong>not</strong> provide identity by itself.</td></tr>
+            <tr><td class="mono">OIDC</td><td>OpenID Connect</td><td>Authentication layer on top of OAuth 2.0. Adds ID Token (JWT). The <code>openid</code> scope is the trigger.</td></tr>
+            <tr><td class="mono">SAML 2.0</td><td>Security Assertion Markup Language 2.0</td><td>Independent XML-based federated auth protocol. Same goal as OIDC, different mechanics.</td></tr>
+            <tr><td class="mono">WS-Fed</td><td>Web Services Federation</td><td>Microsoft's pre-SAML federated auth protocol. Wraps SAML <em>tokens</em> in its own wire protocol. Common in legacy ADFS / SharePoint. <strong>Not</strong> in the Entra &rarr; GitHub path; included for context.</td></tr>
+            <tr><td class="mono">SCIM</td><td>System for Cross-domain Identity Management</td><td>User and group provisioning via REST API. Handles lifecycle, not authentication.</td></tr>
+            <tr><td class="mono">IdP</td><td>Identity Provider</td><td>Entra ID &mdash; acts as both OAuth 2.0 AS and OIDC Provider.</td></tr>
+            <tr><td class="mono">SP</td><td>Service Provider</td><td>GitHub EMU &mdash; acts as OAuth 2.0 Client during OIDC login.</td></tr>
+            <tr><td class="mono">EMU</td><td>Enterprise Managed Users</td><td>GitHub mode where all accounts are IdP-controlled.</td></tr>
+            <tr><td class="mono">JWT</td><td>JSON Web Token</td><td>Compact, signed token format for ID Tokens and Access Tokens.</td></tr>
+            <tr><td class="mono">JWK / JWKS</td><td>JSON Web Key / Key Set</td><td>Public keys for token signature verification.</td></tr>
+            <tr><td class="mono">PAT</td><td>Personal Access Token</td><td>GitHub-issued token authorizing SCIM. Completely separate from OIDC tokens.</td></tr>
+            <tr><td class="mono">MFA</td><td>Multi-Factor Authentication</td><td>Additional factors at the IdP during login.</td></tr>
+            <tr><td class="mono">AuthN</td><td>Authentication</td><td>"Who are you?" Proving identity. OIDC / SAML / WS-Fed handle AuthN.</td></tr>
+            <tr><td class="mono">AuthZ</td><td>Authorization</td><td>"What can you do?" Permissions. OAuth 2.0 handles AuthZ.</td></tr>
+            <tr><td class="mono">PKCE</td><td>Proof Key for Code Exchange</td><td>Security extension to the Authorization Code flow. Prevents auth-code interception. Now mandatory.</td></tr>
+            <tr><td class="mono">FIDO2</td><td>Fast Identity Online 2</td><td>Passwordless auth standard. WebAuthn (browser) + CTAP2 (device). Phishing-resistant.</td></tr>
+            <tr><td class="mono">WebAuthn</td><td>Web Authentication (W3C)</td><td>Browser API (<code>navigator.credentials</code>) for FIDO2.</td></tr>
+            <tr><td class="mono">CTAP2</td><td>Client to Authenticator Protocol 2</td><td>Communication between browser and authenticator device (USB / BT / NFC).</td></tr>
+            <tr><td class="mono">Passkey</td><td>Passkey (industry term)</td><td>Consumer-friendly name for synced WebAuthn credentials (iCloud, Google, Microsoft).</td></tr>
+            <tr><td class="mono">CAE</td><td>Continuous Access Evaluation</td><td>Entra feature that revokes active sessions in near-real-time when conditions change.</td></tr>
+            <tr><td class="mono">CA</td><td>Conditional Access</td><td>Entra policy engine between authentication and token issuance. Evaluates device, location, risk.</td></tr>
+            <tr><td class="mono">SLO</td><td>Single Logout</td><td>Logging out of one app triggers logout everywhere. Fragile in practice.</td></tr>
+            <tr><td class="mono">JIT</td><td>Just-In-Time provisioning</td><td>Accounts created at first login. <strong>Not supported</strong> by GitHub EMU.</td></tr>
+            <tr><td class="mono">AS / RS</td><td>Authorization Server / Resource Server</td><td>OAuth 2.0 roles &mdash; Entra ID / GitHub API.</td></tr>
+            <tr><td class="mono">RBAC</td><td>Role-Based Access Control</td><td>Entra groups map to GitHub teams via SCIM.</td></tr>
+            <tr><td class="mono">TLS</td><td>Transport Layer Security</td><td>Encryption (HTTPS) for all communications.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== PROTOCOL FAMILY (incl. WS-Fed) ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the protocol family</span>
+        <h2>OIDC, SAML, WS-Fed &mdash; three paths to the same destination</h2>
+        <p class="lead">SSO is the goal. OAuth 2.0 is the authorization plumbing. OIDC, SAML, and WS-Fed are three federated-authentication protocols that achieve the same thing in different decades.</p>
+
+        <div class="grid grid-3" style="margin-top: 20px;">
+          <div class="card no-hover">
+            <h3 class="card-title">OIDC</h3>
+            <p>JSON / JWT. Built on OAuth 2.0 &mdash; the <code>openid</code> scope is the switch. Server-to-server back-channel for token exchange. The modern default; what we use here.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge oidc">current</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">SAML 2.0</h3>
+            <p>XML. Everything passes through the browser (POST or redirect bindings). Wide enterprise install base &mdash; still common for older SaaS. Same goal as OIDC, different wire format.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge oidc">current</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">WS-Federation</h3>
+            <p>Microsoft's pre-SAML federation protocol. Carries SAML <em>tokens</em> over its own WS-Trust SOAP-flavoured wire format. Lives in legacy ADFS / SharePoint / older .NET. Maintenance mode.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge legacy">legacy</span></div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Key mental model:</strong> OIDC is a <em>usage mode</em> of OAuth 2.0, activated by <code>openid</code> in the scope. Same pipes, same endpoints &mdash; the scope is the switch. SAML and WS-Fed are independent, parallel protocols built around XML tokens; WS-Fed reuses the SAML token format but with Microsoft-specific message wrapping.
+        </div>
+
+        <div class="callout info">
+          <strong>Why mention WS-Fed at all?</strong> It is <strong>not</strong> part of the Entra ID &rarr; GitHub EMU path &mdash; that pipeline is pure OIDC + SCIM. WS-Fed is included here for conceptual completeness: if you ever inherit an older Microsoft estate (ADFS in front of SharePoint, Dynamics, or older internal apps), you will see it. Entra ID still speaks it as a relying-party trust, but new federation should be OIDC or SAML.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== HOW THE PIECES FIT ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">how the pieces fit</span>
+        <h2>Two protocols, three actors, four OAuth roles</h2>
+        <p class="lead">OIDC handles <strong>authentication</strong> (who?). SCIM handles <strong>provisioning</strong> (should they exist?). OIDC flows through the browser; SCIM is server-to-server. Both must work for the system to work.</p>
+
+        <div class="panel-pair" style="margin-top: 22px;">
+          <div class="panel tinted-purple">
+            <h3 style="font-size:16px;margin-bottom:10px;">The four OAuth 2.0 roles</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>Resource Owner</strong> = the user (the human logging in)</li>
+              <li><strong>Client</strong> = GitHub EMU (initiates the auth request)</li>
+              <li><strong>Authorization Server</strong> = Entra ID (issues tokens)</li>
+              <li><strong>Resource Server</strong> = GitHub API (validates tokens during developer use, not during login)</li>
+            </ul>
+          </div>
+          <div class="panel tinted-teal">
+            <h3 style="font-size:16px;margin-bottom:10px;">Entra ID wears two hats simultaneously</h3>
+            <p style="font-size:13px;line-height:1.7;color:var(--text-2);margin:0;">
+              Entra is the OAuth 2.0 <strong>Authorization Server</strong> and the OIDC <strong>Provider</strong> &mdash; <em>through the same endpoints</em>. With <code>scope=openid email profile</code>, the <code>/token</code> endpoint returns an ID Token + Access Token (OIDC). Without <code>openid</code>, it returns only an Access Token (pure OAuth). The scope is the fork.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== OIDC FLOW + INTERACTIVE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the login dance</span>
+        <h2>OIDC authentication flow &mdash; Authorization Code + PKCE</h2>
+        <p class="lead">GitHub EMU (the Client) orchestrates the eight-step handshake. The critical detail: the auth code travels through the browser, but the <em>token exchange</em> goes over a private back-channel that the user never sees.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">OIDC sequence &mdash; Entra ID &rarr; GitHub EMU</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>play</button>
+            </div>
+          </div>
+          <ol class="flow-steps">
+            <li><span class="flow-dir toidp">user &rarr; gh</span> User navigates to the GitHub enterprise URL.</li>
+            <li><span class="flow-dir toclient">gh &rarr; user</span> HTTP 302 redirect to Entra's <code>/authorize</code>. Carries <code>client_id</code>, <code>redirect_uri</code>, <code>scope=openid email profile</code>, <code>state</code>, <code>nonce</code>, <code>code_challenge</code>.</li>
+            <li><span class="flow-dir toidp">user &rarr; entra</span> Browser follows the redirect. <strong>Conditional Access</strong> evaluates context. User authenticates (password+MFA or FIDO2). Secrets only ever touch the IdP.</li>
+            <li><span class="flow-dir toclient">entra &rarr; user</span> Short-lived authorization code issued. Browser redirected back to the GitHub callback.</li>
+            <li><span class="flow-dir toidp">user &rarr; gh</span> Browser delivers the auth code. GitHub verifies <code>state</code>.</li>
+            <li><span class="flow-dir server">gh &rarr; entra</span> <strong>Back-channel:</strong> POST to <code>/token</code> with the code + <code>client_id</code> + <code>client_secret</code> + <code>code_verifier</code>. Never touches the browser.</li>
+            <li><span class="flow-dir toclient">entra &rarr; gh</span> Entra verifies the verifier against the original challenge. Returns <strong>ID Token</strong> + <strong>Access Token</strong> + <strong>Refresh Token</strong>. GitHub validates the ID Token via JWKS.</li>
+            <li><span class="flow-dir toclient">gh &rarr; user</span> Claims mapped to the SCIM-provisioned EMU account. Session cookie set.</li>
+          </ol>
+        </div>
+
+        <div class="callout warn">
+          <strong>Prerequisite:</strong> This entire flow fails at step 8 if the user was never SCIM-provisioned. SCIM creates the account; OIDC only authenticates an account that already exists. Order matters.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== PKCE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">protecting the auth code</span>
+        <h2>PKCE &mdash; the verifier that never leaves the server</h2>
+        <p class="lead">The authorization code travels through the browser. What stops an attacker who steals it from exchanging it for tokens? A short-lived secret that GitHub holds onto.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">PKCE handshake &mdash; <code>code_verifier</code> vs <code>code_challenge</code></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>simulate attacker</button>
+            </div>
+          </div>
+          <div class="stage-placeholder">
+            <strong>What the animation will show:</strong>
+            <ol>
+              <li>GitHub generates <code>code_verifier</code> (a 128-char random secret) and keeps it locally.</li>
+              <li>GitHub computes <code>code_challenge = SHA256(code_verifier)</code> and sends only the challenge in the auth request.</li>
+              <li>Entra stores the challenge. The auth code returns through the browser &mdash; the moment when interception is possible.</li>
+              <li>On the back-channel token exchange, GitHub sends the original <code>code_verifier</code>. Entra re-hashes it and compares.</li>
+              <li>If an attacker intercepted the auth code at step 3, they can't complete step 4 &mdash; they don't have the verifier (it never left GitHub's server).</li>
+            </ol>
+            <p>The interactive version will let you toggle an "attacker intercepts code" scenario and watch the token request fail with a verifier mismatch.</p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Why this matters:</strong> Without PKCE, a stolen authorization code is enough to obtain tokens. With PKCE, the code is useless without the secret that only the legitimate Client holds. PKCE is now mandatory for all new Entra app registrations.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== AUTH METHODS (FIDO2 / passwords / passkeys) ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">what happens inside step 3</span>
+        <h2>Authentication methods at the IdP</h2>
+        <p class="lead">OIDC does not care <em>how</em> the user authenticates &mdash; the IdP handles it internally and GitHub receives the same ID Token either way. Three flavours, very different security properties.</p>
+
+        <div class="grid grid-3" style="margin-top: 20px;">
+          <div class="card no-hover">
+            <h3 class="card-title">Password + MFA</h3>
+            <p>Type the password, then approve an MFA push or enter an OTP. Two separate steps, two factors (know + have / are).</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge" style="background:var(--acc-5-soft);color:var(--acc-5);border-color:var(--acc-5);">phishable &mdash; password can be stolen</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">FIDO2 / WebAuthn</h3>
+            <p>Tap a security key, fingerprint, or Face ID. A single gesture satisfies both factors (have + are). FIDO2 = WebAuthn (browser API) + CTAP2 (device protocol).</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge oidc">phishing-resistant &mdash; origin-bound</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">Passkeys</h3>
+            <p>Same cryptography as FIDO2, but credentials sync across devices via cloud keychains (iCloud, Google, Microsoft). A passkey <em>is</em> a WebAuthn credential.</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge oidc">phishing-resistant + recoverable</span></div>
+          </div>
+        </div>
+
+        <div class="stage" style="margin-top: 22px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">Phishing simulator &mdash; password vs FIDO2 on <code>evil-login.com</code></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>land on phishing site</button>
+            </div>
+          </div>
+          <div class="stage-placeholder">
+            <strong>What the animation will show:</strong> User clicks a link that points to <code>evil-login.com</code> instead of <code>login.microsoftonline.com</code>. The password method submits credentials to the attacker (red). The FIDO2 authenticator refuses to respond because its key is bound to the <em>exact origin</em> of the original registration (green). The private key never leaves the device. This is the difference, made tangible.
+          </div>
+        </div>
+
+        <p style="margin-top: 16px; font-size: 13px; color: var(--text-2);">
+          These methods operate <em>underneath</em> OIDC, inside step 3 of the flow above. GitHub never knows which one was used &mdash; it only receives the ID Token.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============== CONDITIONAL ACCESS PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the policy gate</span>
+        <h2>Conditional Access &mdash; the gate between AuthN and token issuance</h2>
+        <p class="lead">CA sits <strong>inside Entra</strong>, after authentication succeeds (step 3) but before the authorization code is issued (step 4). It evaluates context and can allow, block, or require step-up.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">CA policy simulator &mdash; signals in, decision out</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>evaluate</button>
+            </div>
+          </div>
+          <div class="stage-placeholder">
+            <strong>What the simulator will show:</strong> toggle inputs (device compliant? corporate network? user risk score? which app?) and watch CA emit a decision (allow / require MFA step-up / require compliant device / block).
+            <ul>
+              <li><strong>Signals (inputs):</strong> device compliance, network location, user risk score, target app, user group membership.</li>
+              <li><strong>Decisions (outputs):</strong> allow, MFA step-up, require compliant device, block.</li>
+              <li><strong>SOX-relevant examples:</strong> "only managed devices can access GitHub", "block access from outside the US", "high-risk users must re-authenticate". Every CA evaluation is logged in Entra sign-in logs &mdash; this is the auditable enforcement layer.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <strong>Why this matters for SOX:</strong> CA is where the access controls auditors care about actually get enforced. The policies are invisible to GitHub (it just sees the login succeed or fail) but they make your identity perimeter testable and provable.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== TOKEN LIFECYCLE + REVOCATION GAP PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">issued, refreshed, revoked</span>
+        <h2>Token lifecycle and the revocation gap</h2>
+        <p class="lead">Issuing tokens is the easy part. What happens after &mdash; when an Access Token expires, when someone is fired at 2pm &mdash; is where the architecture is judged.</p>
+
+        <div class="panel-pair" style="margin: 20px 0;">
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">Token types and lifetimes</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>ID Token</strong> (~1 hour) &mdash; used once at login to establish identity. Not used after.</li>
+              <li><strong>Access Token</strong> (~1 hour) &mdash; authorizes API calls. Short-lived by design.</li>
+              <li><strong>Refresh Token</strong> (days &ndash; months) &mdash; silently obtains new Access Tokens without re-auth. Long-lived.</li>
+              <li><strong>Session cookie</strong> (app-specific) &mdash; GitHub holds its own session, independent of IdP token expiry.</li>
+            </ul>
+          </div>
+          <div class="panel tinted-red">
+            <h3 style="font-size:16px;margin-bottom:10px;">The revocation gap</h3>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);">
+              User terminated at 2pm. SCIM deprovisions on the next sync cycle (up to ~40 minutes). But the user's <strong>active GitHub session may persist</strong> until the session cookie expires. During that window, they can still act on the system.
+            </p>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin-top:8px;">
+              <strong>Mitigation:</strong> enable <strong>CAE</strong> &mdash; Entra pushes critical events (account disabled, password changed, high risk) to supported apps, causing near-real-time session revocation. Also: trigger on-demand SCIM sync for terminations.
+            </p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">Termination timeline &mdash; SCIM sync, session cookie, CAE</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>fire user at 2pm</button>
+            </div>
+          </div>
+          <div class="stage-placeholder">
+            <strong>What the animation will show:</strong> a horizontal timeline starting at login. Bars for ID Token, Access Token, Refresh Token, and the GitHub session cookie extend at their real relative durations. Press <em>fire user at 2pm</em> and a vertical marker appears &mdash; SCIM sync fires ~40 minutes later, but the session cookie bar stays green well past that. The red gap is visualized. Toggle CAE on and the gap collapses to seconds. This is the single best teaching moment in the page.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== SCIM PROVISIONING + LIFECYCLE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the other half of the system</span>
+        <h2>SCIM provisioning &mdash; push-based, server-to-server</h2>
+        <p class="lead">SCIM is the boring, reliable plumbing that makes OIDC login possible in the first place. Triggered when a user or group is assigned to the GitHub enterprise app in Entra. Direction is always Entra &rarr; GitHub.</p>
+
+        <div class="panel-pair" style="margin: 20px 0;">
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">User and group operations</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><code>POST /Users</code> &mdash; create</li>
+              <li><code>GET /Users</code> &mdash; list / search</li>
+              <li><code>PATCH /Users/{id}</code> &mdash; partial update</li>
+              <li><code>PUT /Users/{id}</code> &mdash; replace</li>
+              <li><code>DELETE /Users/{id}</code> &mdash; deprovision</li>
+              <li><code>POST / PATCH / DELETE /Groups</code> &mdash; team mapping</li>
+            </ul>
+            <p style="font-size:12px;color:var(--dim);margin-top:10px;">Base: <code>api.github.com/scim/v2/enterprises/{enterprise}/</code></p>
+          </div>
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">Sync cycles &amp; attribute mapping</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>Initial:</strong> full enumeration via POST</li>
+              <li><strong>Incremental:</strong> every ~40 min (PATCH / DELETE)</li>
+              <li><strong>On-demand:</strong> manual trigger from Entra portal</li>
+            </ul>
+            <p style="font-size:12px;color:var(--dim);margin-top:10px;font-family:var(--font-mono);">
+              userPrincipalName &rarr; userName<br>
+              displayName &rarr; displayName<br>
+              mail &rarr; emails[work].value<br>
+              objectId &rarr; externalId
+            </p>
+            <p style="font-size:13px;color:var(--text-2);margin-top:8px;">
+              <strong>SCIM auth:</strong> PAT bearer token &mdash; completely unrelated to OIDC credentials.
+            </p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">SCIM lifecycle &mdash; assign, sync, deprovision</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="stage-status">interactive walkthrough coming</span>
+              <button class="btn ghost" disabled>reset</button>
+              <button class="btn" disabled>tick the clock</button>
+            </div>
+          </div>
+          <div class="stage-placeholder">
+            <strong>What the animation will show:</strong> a small grid of "users assigned to app" using the <code>.fleet</code> pattern. Each tick triggers SCIM events (POST on new assignment, PATCH on attribute change, DELETE on unassignment). Cell colour shows lifecycle state (pending &rarr; provisioned &rarr; updated &rarr; deprovisioned). Reinforces that SCIM is push-based and runs on a cadence.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== IDENTITY LIFECYCLE ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">how the two protocols connect</span>
+        <h2>Identity lifecycle &mdash; SCIM and OIDC in sequence</h2>
+        <p class="lead">Assign in Entra &rarr; SCIM provisions &rarr; user logs in via OIDC &rarr; SCIM keeps syncing &rarr; SCIM deprovisions. SCIM must complete before OIDC login can succeed.</p>
+
+        <div class="callout">
+          <strong>Why SCIM instead of JIT?</strong> JIT (Just-In-Time provisioning) only creates accounts at first login. No ongoing sync, no group management, no deprovisioning. GitHub EMU requires SCIM &mdash; JIT is not supported. SCIM is the enterprise approach: full lifecycle, server-to-server, accounts pre-staged before the first login.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== OAUTH GRANT TYPES ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">beyond the auth code flow</span>
+        <h2>OAuth 2.0 grant types in this architecture</h2>
+        <p class="lead">Authorization Code with PKCE is the user-in-browser flow we've been discussing. OAuth defines a few others for different shapes of caller.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>Grant type</th><th>When</th><th>User?</th><th>Example here</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Authorization Code + PKCE</td><td>Web app login</td><td>Yes (browser)</td><td>GitHub EMU OIDC login &mdash; the flow throughout this page.</td></tr>
+            <tr><td class="mono">Client Credentials</td><td>Service-to-service</td><td>No</td><td>Machine-to-machine API calls. Conceptually similar to SCIM &mdash; a provisioning engine calling an API with a bearer token, no human in the loop.</td></tr>
+            <tr><td class="mono">Device Code</td><td>Input-constrained device</td><td>Yes (separate screen)</td><td><code>gh auth login</code> on the CLI. Device shows a code; user enters it on a separate browser to authorize.</td></tr>
+            <tr><td class="mono">Refresh Token</td><td>Silent token renewal</td><td>No (silent)</td><td>Access Token expires &rarr; app uses the Refresh Token to get a new one without re-authenticating.</td></tr>
+            <tr><td class="mono">Implicit (deprecated)</td><td>Legacy SPAs</td><td>Yes</td><td>Returned tokens directly in the URL fragment. Insecure &mdash; no back-channel, no PKCE. Replaced by Auth Code + PKCE.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== DISCOVERY + SLO ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">bootstrap &amp; logout</span>
+        <h2>OIDC Discovery and Single Logout</h2>
+        <p class="lead">How GitHub finds Entra's endpoints (Discovery), and why logging out everywhere is harder than logging in (SLO).</p>
+
+        <h3 style="font-family:var(--font-display);font-size:18px;margin-top:16px;color:var(--text-strong);">The Discovery document</h3>
+        <p style="font-size:13px;color:var(--text-2);">A single JSON document at <code>https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration</code> tells GitHub everything it needs to know about Entra: <code>authorization_endpoint</code>, <code>token_endpoint</code>, <code>jwks_uri</code>, <code>issuer</code>, <code>scopes_supported</code>, <code>response_types_supported</code>, <code>grant_types_supported</code>, <code>end_session_endpoint</code>.</p>
+        <p style="font-size:13px;color:var(--text-2);margin-top:8px;">If this URL becomes unreachable or returns wrong data, the entire OIDC trust chain breaks. Single point of failure &mdash; monitor it.</p>
+
+        <h3 style="font-family:var(--font-display);font-size:18px;margin-top:24px;color:var(--text-strong);">Single Logout (SLO)</h3>
+        <p style="font-size:13px;color:var(--text-2);">Two mechanisms, both fragile.</p>
+
+        <div class="panel-pair" style="margin-top: 12px;">
+          <div class="panel">
+            <h4 style="font-family:var(--font-display);font-size:14px;color:var(--text-strong);margin-bottom:8px;">Front-channel logout</h4>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin:0;">GitHub redirects the browser to Entra's <code>end_session_endpoint</code>. Entra loads hidden iframes pointing at every app's logout URL. Relies on browser behaviour &mdash; ad blockers, cookie policies, and network hiccups silently break it.</p>
+          </div>
+          <div class="panel">
+            <h4 style="font-family:var(--font-display);font-size:14px;color:var(--text-strong);margin-bottom:8px;">Back-channel logout</h4>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin:0;">Entra sends a server-to-server POST with a logout token to each app's registered back-channel logout URI. More reliable, but the app has to implement the endpoint and process the token.</p>
+          </div>
+        </div>
+
+        <div class="callout info" style="margin-top: 18px;">
+          <strong>Practical reality:</strong> Full SLO is fragile and many implementations don't fully support it. For the employee-termination scenario, rely on SCIM deprovisioning + CAE rather than SLO.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== GITHUB EMU THREE HATS ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">one product, three roles</span>
+        <h2>GitHub EMU wears three hats</h2>
+        <p class="lead">Most architecture confusion comes from forgetting that GitHub plays different roles in different conversations.</p>
+
+        <div style="margin-top: 18px;">
+          <div class="role-card oidc">
+            <h4>Hat 1 &mdash; OAuth 2.0 Client <span class="tag-badge oidc" style="margin-left:8px;">OIDC login</span></h4>
+            <p>Initiates the auth request, redirects to Entra, receives the code, exchanges it on the back-channel (with PKCE), validates the ID Token via JWKS, maps claims to an EMU account, creates the session. <strong>Active orchestration.</strong></p>
+          </div>
+          <div class="role-card scim">
+            <h4>Hat 2 &mdash; SCIM server <span class="tag-badge scim" style="margin-left:8px;">provisioning</span></h4>
+            <p>Roles flip. GitHub <em>hosts</em> SCIM API endpoints; Entra <em>calls in</em>. Authenticated via PAT bearer token. <strong>GitHub is the server here.</strong></p>
+          </div>
+          <div class="role-card dev">
+            <h4>Hat 3 &mdash; Resource Server <span class="tag-badge infra" style="margin-left:8px;">developer use</span></h4>
+            <p>When devs run <code>git push</code> or call the API (sometimes via Device Code), GitHub protects its resources and validates credentials directly. No IdP in the loop for git operations.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== DEPENDENCY CHAIN ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">what depends on what</span>
+        <h2>Dependency and trust chain</h2>
+        <p class="lead">Ordered by dependency. Each row requires those above it. Useful as both a build checklist and an outage triage tree.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>#</th><th>Component</th><th>Where</th><th>Used by</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td class="mono">DNS + TLS</td><td>Infra</td><td><span class="tag-badge both">both</span></td><td>HTTPS for all comms. Must resolve <code>login.microsoftonline.com</code>, <code>api.github.com</code>, <code>github.com</code>.</td></tr>
+            <tr><td class="num">2</td><td class="mono">Entra ID tenant</td><td>M365</td><td><span class="tag-badge both">both</span></td><td>Identity store. OAuth 2.0 AS + OIDC Provider. Hosts Conditional Access.</td></tr>
+            <tr><td class="num">3</td><td class="mono">GitHub Enterprise (EMU)</td><td>GitHub</td><td><span class="tag-badge both">both</span></td><td>Client (login), SCIM Server (provisioning), Resource Server (dev use).</td></tr>
+            <tr><td class="num">4</td><td class="mono">Enterprise app registration</td><td>Entra ID</td><td><span class="tag-badge both">both</span></td><td>Single registration with OIDC config + SCIM config. <code>openid</code> activates OIDC.</td></tr>
+            <tr><td class="num">5</td><td class="mono">OIDC discovery doc</td><td>Entra (auto)</td><td><span class="tag-badge oidc">oidc</span></td><td><code>.well-known/openid-configuration</code> &mdash; bootstrap for the entire trust relationship. If unreachable, nothing works.</td></tr>
+            <tr><td class="num">6</td><td class="mono">client_id + client_secret</td><td>Entra &rarr; GitHub</td><td><span class="tag-badge oidc">oidc</span></td><td><code>client_id</code> identifies GitHub; <code>client_secret</code> authenticates the back-channel exchange.</td></tr>
+            <tr><td class="num">7</td><td class="mono">JWKS endpoint</td><td>Entra (auto)</td><td><span class="tag-badge oidc">oidc</span></td><td>Public keys for JWT verification. Auto-rotating &mdash; respect the cache headers.</td></tr>
+            <tr><td class="num">8</td><td class="mono">Redirect URI(s)</td><td>Entra app</td><td><span class="tag-badge oidc">oidc</span></td><td>Callback URL for the auth code. Must match exactly, including trailing slash.</td></tr>
+            <tr><td class="num">9</td><td class="mono">Conditional Access</td><td>Entra ID</td><td><span class="tag-badge oidc">oidc</span></td><td>Policy gate between AuthN and token issuance. Evaluates device, location, risk.</td></tr>
+            <tr><td class="num">10</td><td class="mono">SCIM endpoint URL</td><td>Entra prov.</td><td><span class="tag-badge scim">scim</span></td><td><code>api.github.com/scim/v2/enterprises/{enterprise}/</code></td></tr>
+            <tr><td class="num">11</td><td class="mono">SCIM bearer (PAT)</td><td>GitHub &rarr; Entra</td><td><span class="tag-badge scim">scim</span></td><td>PAT with <code>admin:enterprise</code>. Unrelated to OIDC. Rotate before expiry.</td></tr>
+            <tr><td class="num">12</td><td class="mono">Attribute mappings</td><td>Entra prov.</td><td><span class="tag-badge scim">scim</span></td><td>Maps Entra fields to SCIM schema. Errors here cause silent attribute drift.</td></tr>
+            <tr><td class="num">13</td><td class="mono">User / group assignments</td><td>Entra app</td><td><span class="tag-badge scim">scim</span></td><td>Only assigned users / groups are provisioned. <strong>Assignment is the trigger.</strong></td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <strong>Trust summary:</strong> GitHub trusts Entra via JWKS signature verification (OIDC). Entra trusts GitHub via the pre-configured SCIM endpoint + PAT. User credentials (password / MFA / FIDO2) go <strong>only</strong> to Entra, never to GitHub. Two secrets in play: <code>client_secret</code> (OIDC back-channel) and the PAT bearer (SCIM). Two public mechanisms: JWKS and the discovery document.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== FAILURE MODES ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">when things break</span>
+        <h2>Failure modes &mdash; what each symptom usually means</h2>
+        <p class="lead">A pattern library for triage. Most live incidents reduce to one of these.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>Symptom</th><th>Protocol</th><th>Root cause &rarr; fix</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">"Account not found" at login</td><td><span class="tag-badge scim">scim</span></td><td>User not provisioned. Must be <strong>assigned to the GitHub enterprise app</strong> in Entra. Check provisioning logs.</td></tr>
+            <tr><td class="mono">redirect_uri_mismatch</td><td><span class="tag-badge oidc">oidc</span></td><td>Callback URL does not exactly match the Entra app registration. Check trailing slashes.</td></tr>
+            <tr><td class="mono">Invalid signature</td><td><span class="tag-badge oidc">oidc</span></td><td>JWKS endpoint unreachable (firewall), keys rotated with a stale cache, or wrong issuer URL.</td></tr>
+            <tr><td class="mono">SCIM 401 Unauthorized</td><td><span class="tag-badge scim">scim</span></td><td>PAT expired or revoked. Generate a new one in GitHub, update the Entra config.</td></tr>
+            <tr><td class="mono">Attributes out of sync</td><td><span class="tag-badge scim">scim</span></td><td>Incorrect attribute mappings, or sync hasn't run yet (~40 min). Trigger a manual sync.</td></tr>
+            <tr><td class="mono">Unexpected deprovision</td><td><span class="tag-badge scim">scim</span></td><td>User unassigned from the app, or Entra account disabled. SCIM propagated correctly.</td></tr>
+            <tr><td class="mono">Login OK but wrong teams</td><td><span class="tag-badge scim">scim</span></td><td>OIDC auth succeeded but SCIM group mappings are wrong. AuthN and AuthZ are separate.</td></tr>
+            <tr><td class="mono">Login blocked unexpectedly</td><td><span class="tag-badge oidc">oidc</span></td><td><strong>Conditional Access</strong> blocking. Check for non-compliant device, risky location, high user risk score. Entra sign-in logs include the CA evaluation result.</td></tr>
+            <tr><td class="mono">Terminated user still has access</td><td><span class="tag-badge both">both</span></td><td><strong>Revocation gap.</strong> SCIM hasn't run yet (~40 min cycle) and / or session cookie persists. Mitigate: on-demand SCIM sync for terminations + enable CAE.</td></tr>
+            <tr><td class="mono">Discovery endpoint unreachable</td><td><span class="tag-badge oidc">oidc</span></td><td><code>.well-known/openid-configuration</code> blocked by firewall or DNS failure. No OIDC flow can start. Check the network path to <code>login.microsoftonline.com</code>.</td></tr>
+            <tr><td class="mono">PKCE verification failed</td><td><span class="tag-badge oidc">oidc</span></td><td><code>code_verifier</code> does not match the original <code>code_challenge</code>. Usually a bug in a custom integration. For GitHub EMU this is automatic &mdash; if rolling your own, verify the challenge method is <code>S256</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== ROADMAP NOTE ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">where this page is going</span>
+        <h2>Interactive walkthroughs, landing one at a time</h2>
+        <p>This page is the reference layer. Six interactive demos will replace the placeholder stages above &mdash; in this order, by teaching value:</p>
+        <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
+          <li>PKCE handshake (verifier vs challenge, with an attacker-intercept toggle)</li>
+          <li>OIDC sequence diagram (play / step / reset)</li>
+          <li>Conditional Access policy simulator (toggle signals, see decision)</li>
+          <li>Termination timeline &mdash; the revocation gap and what CAE does to it</li>
+          <li>SCIM lifecycle ticker (fleet-cell animation of POST / PATCH / DELETE)</li>
+          <li>Phishing simulator (password submits, FIDO2 refuses the wrong origin)</li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>&copy; <span id="year"></span> my-learnings &middot; built static &middot; no tracking</div>
+      <div><a href="../">home</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>
