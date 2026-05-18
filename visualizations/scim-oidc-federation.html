@@ -538,6 +538,101 @@
       .term-labels, .term-metas { font-size: 10px; }
       .term-event .ev-label { font-size: 9px; }
     }
+
+    /* ------------------------------------------------------------
+       SCIM lifecycle widget — fleet-cell grid driven by a sim clock.
+       Uses the site's .fleet/.cell pattern. Three event types drive
+       three cell-state classes (checking/changing/fail). Queue drains
+       on every sync cycle (every 40 simulated minutes).
+       ------------------------------------------------------------ */
+    .scim-demo { display: flex; flex-direction: column; gap: 12px; }
+
+    .scim-meter {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .scim-meter .m-cell {
+      padding: 10px 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: background 250ms, border-color 250ms;
+    }
+    .scim-meter.syncing .m-cell {
+      background: var(--acc-1-soft); border-color: var(--acc-1);
+    }
+    .scim-meter .m-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .scim-meter .m-value {
+      font-family: var(--font-display); font-size: 17px;
+      font-weight: 700; color: var(--text-strong);
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .scim-queue-row {
+      padding: 10px 14px;
+      background: var(--panel); border: 1px dashed var(--border-2);
+      border-radius: var(--radius);
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      min-height: 38px;
+    }
+    .scim-queue-row .queue-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .scim-queue-row .queue-content {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--dim);
+    }
+    .scim-qchip {
+      display: inline-flex; align-items: center;
+      padding: 3px 8px; border-radius: 3px;
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.04em;
+      border: 1px solid;
+    }
+    .scim-qchip.post   { background: var(--acc-4-soft); color: var(--acc-4); border-color: var(--acc-4); }
+    .scim-qchip.patch  { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+    .scim-qchip.delete { background: var(--acc-5-soft); color: var(--acc-5); border-color: var(--acc-5); }
+
+    .scim-log {
+      padding: 12px 16px;
+      background: var(--panel-3); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 11px;
+      line-height: 1.7;
+      min-height: 90px;
+      max-height: 160px; overflow-y: auto;
+    }
+    .scim-log .log-entry {
+      display: grid;
+      grid-template-columns: 60px 70px 1fr auto;
+      gap: 10px;
+      padding: 2px 0;
+      color: var(--text);
+    }
+    .scim-log .log-entry .time { color: var(--dim); }
+    .scim-log .log-entry .method { font-weight: 600; }
+    .scim-log .log-entry.post   .method { color: var(--acc-4); }
+    .scim-log .log-entry.patch  .method { color: var(--acc-6); }
+    .scim-log .log-entry.delete .method { color: var(--acc-5); }
+    .scim-log .log-entry .delay { color: var(--dim); font-size: 10px; white-space: nowrap; }
+    .scim-log .log-empty { color: var(--dim); font-style: italic; }
+
+    /* fleet pulse when sync drains the queue */
+    .fleet.sync-firing { box-shadow: 0 0 0 2px var(--acc-1); transition: box-shadow 250ms; }
+
+    @media (max-width: 720px) {
+      .scim-meter { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .scim-meter .m-cell { padding: 8px 10px; }
+      .scim-meter .m-value { font-size: 14px; }
+      .scim-log .log-entry { grid-template-columns: 1fr; gap: 2px; }
+    }
   </style>
 </head>
 <body>
@@ -1150,15 +1245,39 @@
 
         <div class="stage">
           <div class="stage-toolbar">
-            <div class="stage-title">SCIM lifecycle &mdash; assign, sync, deprovision</div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>tick the clock</button>
+            <div class="stage-title">SCIM lifecycle &mdash; events queue at Entra, sync drains them into GitHub</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="scimReset">reset</button>
+              <button class="btn" id="scimPlay">play</button>
             </div>
           </div>
-          <div class="stage-placeholder">
-            <strong>What the animation will show:</strong> a small grid of "users assigned to app" using the <code>.fleet</code> pattern. Each tick triggers SCIM events (POST on new assignment, PATCH on attribute change, DELETE on unassignment). Cell colour shows lifecycle state (pending &rarr; provisioned &rarr; updated &rarr; deprovisioned). Reinforces that SCIM is push-based and runs on a cadence.
+
+          <div class="scim-demo">
+            <div class="scim-meter" id="scimMeter">
+              <div class="m-cell">
+                <div class="m-label">Simulated time</div>
+                <div class="m-value" id="scimTime">00:00</div>
+              </div>
+              <div class="m-cell">
+                <div class="m-label">Next sync in</div>
+                <div class="m-value" id="scimNextSync">40 min</div>
+              </div>
+              <div class="m-cell">
+                <div class="m-label">Events queued</div>
+                <div class="m-value" id="scimQueueCount">0</div>
+              </div>
+            </div>
+
+            <div class="scim-queue-row">
+              <span class="queue-label">queued at Entra</span>
+              <span class="queue-content" id="scimQueueList">&mdash; empty &mdash;</span>
+            </div>
+
+            <div class="fleet fleet-5" id="scimFleet"></div>
+
+            <div class="scim-log" id="scimLog">
+              <div class="log-empty">Press play. Events will appear here as each sync cycle drains the queue.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1314,10 +1433,9 @@
     <section class="section">
       <div class="container">
         <span class="sec-eyebrow">where this page is going</span>
-        <h2>More interactive walkthroughs, landing one at a time</h2>
-        <p>PKCE, the OIDC sequence, the Conditional Access simulator, and the termination timeline are live above. Two more demos remain:</p>
+        <h2>One more walkthrough to land</h2>
+        <p>PKCE, the OIDC sequence, the Conditional Access simulator, the termination timeline, and the SCIM lifecycle ticker are live above. One demo remains:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>SCIM lifecycle ticker (fleet-cell animation of POST / PATCH / DELETE)</li>
           <li>Phishing simulator (password submits, FIDO2 refuses the wrong origin)</li>
         </ol>
       </div>
@@ -1766,6 +1884,261 @@
       resetBtn.addEventListener('click', reset);
 
       render();
+    })();
+
+    // SCIM lifecycle widget — clock-driven event queue + sync drain
+    (function () {
+      const fleet = document.getElementById('scimFleet');
+      if (!fleet) return;
+
+      const meter        = document.getElementById('scimMeter');
+      const timeEl       = document.getElementById('scimTime');
+      const nextSyncEl   = document.getElementById('scimNextSync');
+      const queueCountEl = document.getElementById('scimQueueCount');
+      const queueListEl  = document.getElementById('scimQueueList');
+      const logEl        = document.getElementById('scimLog');
+      const playBtn      = document.getElementById('scimPlay');
+      const resetBtn     = document.getElementById('scimReset');
+
+      const NUM_CELLS = 20;
+      const TICK_MS = 250;           // 4 ticks per real second
+      const SIM_MIN_PER_TICK = 1;    // each tick = 1 sim minute → 4 sim min / real sec
+      const SYNC_INTERVAL_MIN = 40;  // 40 sim min = 10 real sec
+      const EVENT_MIN_INTERVAL = 3;  // min sim minutes between events
+      const EVENT_MAX_INTERVAL = 8;
+      const INITIAL_FILL = 8;        // cells pre-provisioned at start
+      const MAX_LOG_ENTRIES = 6;
+
+      const cells = [];
+
+      function buildCells() {
+        fleet.replaceChildren();
+        cells.length = 0;
+        for (let i = 0; i < NUM_CELLS; i++) {
+          const el = document.createElement('div');
+          el.className = 'cell';
+          const label = document.createElement('div');
+          label.className = 'label';
+          label.textContent = 'user-' + String(i + 1).padStart(2, '0');
+          const state = document.createElement('div');
+          state.className = 'state';
+          state.textContent = 'empty';
+          el.appendChild(label);
+          el.appendChild(state);
+          fleet.appendChild(el);
+          cells.push({ id: i + 1, el, stateEl: state, present: false });
+        }
+      }
+
+      function prefill() {
+        const idxs = [];
+        const pool = [];
+        for (let i = 0; i < NUM_CELLS; i++) pool.push(i);
+        for (let n = 0; n < INITIAL_FILL; n++) {
+          const k = Math.floor(Math.random() * pool.length);
+          idxs.push(pool.splice(k, 1)[0]);
+        }
+        idxs.forEach(i => {
+          cells[i].present = true;
+          cells[i].el.classList.add('ok');
+          cells[i].stateEl.textContent = 'provisioned';
+        });
+      }
+
+      let simTime = 0;
+      let nextSyncAt = SYNC_INTERVAL_MIN;
+      let nextEventAt = randEventInterval();
+      let queue = [];
+      let log = [];
+      let running = false;
+      let timer = null;
+
+      function randEventInterval() {
+        return EVENT_MIN_INTERVAL + Math.random() * (EVENT_MAX_INTERVAL - EVENT_MIN_INTERVAL);
+      }
+
+      function formatTime(mins) {
+        const h = Math.floor(mins / 60);
+        const m = Math.floor(mins % 60);
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      }
+
+      function generateEvent() {
+        const present = cells.filter(c => c.present);
+        const absent  = cells.filter(c => !c.present);
+        let type, cell;
+        if (present.length === 0) {
+          type = 'POST'; cell = absent[Math.floor(Math.random() * absent.length)];
+        } else if (absent.length === 0) {
+          type = Math.random() < 0.6 ? 'PATCH' : 'DELETE';
+          cell = present[Math.floor(Math.random() * present.length)];
+        } else {
+          const r = Math.random();
+          if (r < 0.35) { type = 'POST'; cell = absent[Math.floor(Math.random() * absent.length)]; }
+          else if (r < 0.80) { type = 'PATCH'; cell = present[Math.floor(Math.random() * present.length)]; }
+          else { type = 'DELETE'; cell = present[Math.floor(Math.random() * present.length)]; }
+        }
+        if (!cell) return null;
+
+        // Avoid queueing an event that contradicts an earlier queued event for the same cell
+        for (const q of queue) {
+          if (q.cell === cell) return null;
+        }
+        return { type, cell, queuedAt: simTime };
+      }
+
+      function tick() {
+        simTime += SIM_MIN_PER_TICK;
+
+        if (simTime >= nextEventAt) {
+          const evt = generateEvent();
+          if (evt) queue.push(evt);
+          nextEventAt = simTime + randEventInterval();
+        }
+
+        if (simTime >= nextSyncAt) {
+          drainQueue();
+          nextSyncAt = simTime + SYNC_INTERVAL_MIN;
+        }
+
+        renderMeter();
+        renderQueue();
+      }
+
+      function drainQueue() {
+        const events = queue.slice();
+        queue = [];
+
+        meter.classList.add('syncing');
+        fleet.classList.add('sync-firing');
+        setTimeout(() => {
+          meter.classList.remove('syncing');
+          fleet.classList.remove('sync-firing');
+        }, 400);
+
+        events.forEach((evt, i) => {
+          setTimeout(() => applyEvent(evt), i * 90);
+        });
+      }
+
+      function applyEvent(evt) {
+        const cell = evt.cell;
+        const el = cell.el;
+        const stateEl = cell.stateEl;
+
+        el.classList.remove('ok', 'checking', 'changing', 'fail');
+
+        const transientClass = evt.type === 'POST' ? 'checking'
+                             : evt.type === 'PATCH' ? 'changing'
+                             : 'fail';
+        const transientState = evt.type === 'POST' ? 'creating'
+                             : evt.type === 'PATCH' ? 'updating'
+                             : 'deprovisioning';
+        el.classList.add(transientClass);
+        stateEl.textContent = transientState;
+
+        setTimeout(() => {
+          el.classList.remove(transientClass);
+          if (evt.type === 'DELETE') {
+            cell.present = false;
+            stateEl.textContent = 'empty';
+          } else {
+            cell.present = true;
+            el.classList.add('ok');
+            stateEl.textContent = 'provisioned';
+          }
+        }, 600);
+
+        log.unshift({
+          type: evt.type,
+          time: formatTime(simTime),
+          user: 'user-' + String(cell.id).padStart(2, '0'),
+          delayMin: simTime - evt.queuedAt
+        });
+        if (log.length > MAX_LOG_ENTRIES) log.length = MAX_LOG_ENTRIES;
+        renderLog();
+      }
+
+      function renderMeter() {
+        timeEl.textContent = formatTime(simTime);
+        const left = Math.max(0, nextSyncAt - simTime);
+        nextSyncEl.textContent = Math.ceil(left) + ' min';
+        queueCountEl.textContent = String(queue.length);
+      }
+
+      function renderQueue() {
+        queueListEl.replaceChildren();
+        if (queue.length === 0) {
+          queueListEl.textContent = '— empty —';
+          return;
+        }
+        queue.forEach(evt => {
+          const chip = document.createElement('span');
+          chip.className = 'scim-qchip ' + evt.type.toLowerCase();
+          chip.textContent = evt.type + ' user-' + String(evt.cell.id).padStart(2, '0');
+          queueListEl.appendChild(chip);
+        });
+      }
+
+      function renderLog() {
+        logEl.replaceChildren();
+        if (log.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'log-empty';
+          empty.textContent = 'Press play. Events will appear here as each sync cycle drains the queue.';
+          logEl.appendChild(empty);
+          return;
+        }
+        log.forEach(entry => {
+          const row = document.createElement('div');
+          row.className = 'log-entry ' + entry.type.toLowerCase();
+          const t = document.createElement('span'); t.className = 'time'; t.textContent = 't=' + entry.time;
+          const m = document.createElement('span'); m.className = 'method'; m.textContent = entry.type;
+          const p = document.createElement('span'); p.className = 'path';
+          p.textContent = entry.type === 'POST' ? '/Users (' + entry.user + ')' : '/Users/' + entry.user;
+          const d = document.createElement('span'); d.className = 'delay';
+          d.textContent = 'queued ' + Math.round(entry.delayMin) + ' min earlier';
+          row.appendChild(t); row.appendChild(m); row.appendChild(p); row.appendChild(d);
+          logEl.appendChild(row);
+        });
+      }
+
+      function start() {
+        if (running) return;
+        running = true;
+        playBtn.textContent = 'pause';
+        timer = setInterval(tick, TICK_MS);
+      }
+
+      function stop() {
+        if (!running) return;
+        running = false;
+        playBtn.textContent = 'play';
+        if (timer) { clearInterval(timer); timer = null; }
+      }
+
+      function reset() {
+        stop();
+        simTime = 0;
+        nextSyncAt = SYNC_INTERVAL_MIN;
+        nextEventAt = randEventInterval();
+        queue = [];
+        log = [];
+        buildCells();
+        prefill();
+        renderMeter();
+        renderQueue();
+        renderLog();
+      }
+
+      playBtn.addEventListener('click', () => running ? stop() : start());
+      resetBtn.addEventListener('click', reset);
+
+      buildCells();
+      prefill();
+      renderMeter();
+      renderQueue();
+      renderLog();
     })();
   </script>
 </body>
