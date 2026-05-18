@@ -233,6 +233,63 @@
       .pkce-cell.empty { display: none; }
       .pkce-msg.span-3 { grid-column: 2; }
     }
+
+    /* ------------------------------------------------------------
+       OIDC flow widget — makes .flow-steps interactive.
+       Dim / active / done states; special back-channel treatment
+       on step 6 to echo PKCE's back-channel coloring.
+       ------------------------------------------------------------ */
+    .flow-steps.interactive li {
+      opacity: 0.28;
+      transition: opacity 300ms, border-color 300ms, background 300ms;
+    }
+    .flow-steps.interactive li::before {
+      transition: background 300ms, color 300ms;
+    }
+    .flow-steps.interactive li.done { opacity: 0.72; }
+    .flow-steps.interactive li.active {
+      opacity: 1;
+      border-color: var(--acc-1);
+      background: var(--panel-2);
+    }
+    .flow-steps.interactive li.active::before {
+      background: var(--acc-1);
+      color: var(--text-strong);
+    }
+    .flow-steps.interactive li.back-channel.active {
+      border-color: var(--acc-6);
+      background: var(--acc-6-soft);
+    }
+    .flow-steps.interactive li.back-channel.active::before {
+      background: var(--acc-6);
+    }
+
+    /* Back-channel badge — only visible once the step is reached */
+    .bc-badge {
+      display: none;
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 2px 7px; margin-left: 8px; border-radius: 3px;
+      background: var(--acc-6); color: var(--text-strong);
+      vertical-align: middle;
+    }
+    .flow-steps.interactive li.back-channel.active .bc-badge,
+    .flow-steps.interactive li.back-channel.done .bc-badge { display: inline-block; }
+
+    /* OIDC status bar — parallel to .pkce-status */
+    .oidc-status {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-top: 12px;
+      padding: 10px 14px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .oidc-status .progress {
+      font-family: var(--font-mono); font-size: 11px; color: var(--dim);
+      letter-spacing: 0.08em;
+    }
+    .oidc-status .msg { color: var(--text-2); }
+    .oidc-status.back-channel .msg { color: var(--acc-6); }
   </style>
 </head>
 <body>
@@ -388,22 +445,27 @@
         <div class="stage" style="margin-top: 20px;">
           <div class="stage-toolbar">
             <div class="stage-title">OIDC sequence &mdash; Entra ID &rarr; GitHub EMU</div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>play</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="oidcReset">reset</button>
+              <button class="btn ghost" id="oidcStep">step</button>
+              <button class="btn" id="oidcPlay">play</button>
             </div>
           </div>
-          <ol class="flow-steps">
+          <ol class="flow-steps interactive" id="oidcFlow">
             <li><span class="flow-dir toidp">user &rarr; gh</span> User navigates to the GitHub enterprise URL.</li>
             <li><span class="flow-dir toclient">gh &rarr; user</span> HTTP 302 redirect to Entra's <code>/authorize</code>. Carries <code>client_id</code>, <code>redirect_uri</code>, <code>scope=openid email profile</code>, <code>state</code>, <code>nonce</code>, <code>code_challenge</code>.</li>
             <li><span class="flow-dir toidp">user &rarr; entra</span> Browser follows the redirect. <strong>Conditional Access</strong> evaluates context. User authenticates (password+MFA or FIDO2). Secrets only ever touch the IdP.</li>
             <li><span class="flow-dir toclient">entra &rarr; user</span> Short-lived authorization code issued. Browser redirected back to the GitHub callback.</li>
             <li><span class="flow-dir toidp">user &rarr; gh</span> Browser delivers the auth code. GitHub verifies <code>state</code>.</li>
-            <li><span class="flow-dir server">gh &rarr; entra</span> <strong>Back-channel:</strong> POST to <code>/token</code> with the code + <code>client_id</code> + <code>client_secret</code> + <code>code_verifier</code>. Never touches the browser.</li>
+            <li class="back-channel"><span class="flow-dir server">gh &rarr; entra</span> <strong>Back-channel:</strong> POST to <code>/token</code> with the code + <code>client_id</code> + <code>client_secret</code> + <code>code_verifier</code>. Never touches the browser.<span class="bc-badge">back-channel</span></li>
             <li><span class="flow-dir toclient">entra &rarr; gh</span> Entra verifies the verifier against the original challenge. Returns <strong>ID Token</strong> + <strong>Access Token</strong> + <strong>Refresh Token</strong>. GitHub validates the ID Token via JWKS.</li>
             <li><span class="flow-dir toclient">gh &rarr; user</span> Claims mapped to the SCIM-provisioned EMU account. Session cookie set.</li>
           </ol>
+
+          <div class="oidc-status" id="oidcStatus">
+            <span class="progress" id="oidcProgress">0 / 8</span>
+            <span class="msg" id="oidcMsg">Press play to walk through the 8-step OIDC flow.</span>
+          </div>
         </div>
 
         <div class="callout warn">
@@ -878,9 +940,8 @@
       <div class="container">
         <span class="sec-eyebrow">where this page is going</span>
         <h2>More interactive walkthroughs, landing one at a time</h2>
-        <p>PKCE is live above. Five more demos will replace the remaining placeholder stages on this page, in this order:</p>
+        <p>PKCE and the OIDC sequence are live above. Four more demos remain:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>OIDC sequence diagram (play / step / reset)</li>
           <li>Conditional Access policy simulator (toggle signals, see decision)</li>
           <li>Termination timeline &mdash; the revocation gap and what CAE does to it</li>
           <li>SCIM lifecycle ticker (fleet-cell animation of POST / PATCH / DELETE)</li>
@@ -1033,6 +1094,91 @@
       attackBtn.addEventListener('click', toggleAttack);
 
       rebuildVisible();
+      render();
+    })();
+
+    // OIDC sequence widget — animates the numbered .flow-steps list
+    (function () {
+      const flowEl = document.getElementById('oidcFlow');
+      if (!flowEl) return;
+
+      const steps = Array.from(flowEl.querySelectorAll('li'));
+      const progressEl = document.getElementById('oidcProgress');
+      const msgEl      = document.getElementById('oidcMsg');
+      const statusEl   = document.getElementById('oidcStatus');
+
+      const playBtn  = document.getElementById('oidcPlay');
+      const stepBtn  = document.getElementById('oidcStep');
+      const resetBtn = document.getElementById('oidcReset');
+
+      const captions = [
+        'User navigates to the GitHub enterprise URL.',
+        'GitHub redirects to Entra /authorize — request carries the PKCE challenge.',
+        'Conditional Access evaluates. User authenticates at the IdP. Secrets never touch GitHub.',
+        'Entra issues a short-lived authorization code.',
+        'Browser delivers the code back to GitHub. state is verified.',
+        'Back-channel POST /token — verifier sent, browser sits this one out.',
+        'Entra returns ID Token + Access Token + Refresh Token. GitHub validates via JWKS.',
+        'Claims mapped to the SCIM-provisioned account. Session cookie set.'
+      ];
+      const INITIAL_MSG = 'Press play to walk through the 8-step OIDC flow.';
+      const BACK_CHANNEL_INDEX = 5; // zero-indexed step 6
+      const STEP_INTERVAL_MS = 1100;
+
+      let position = 0;
+      let timer = null;
+
+      function render() {
+        steps.forEach((s, i) => {
+          s.classList.remove('active', 'done');
+          if (i < position - 1) s.classList.add('done');
+          else if (i === position - 1) s.classList.add('active');
+        });
+        progressEl.textContent = position + ' / ' + steps.length;
+
+        if (position === 0) {
+          statusEl.classList.remove('back-channel');
+          msgEl.textContent = INITIAL_MSG;
+        } else {
+          msgEl.textContent = captions[position - 1];
+          statusEl.classList.toggle('back-channel', position === BACK_CHANNEL_INDEX + 1);
+        }
+      }
+
+      function advance() {
+        if (position >= steps.length) { stopAuto(); return; }
+        position += 1;
+        render();
+        if (position >= steps.length) stopAuto();
+      }
+
+      function startAuto() {
+        if (timer) return;
+        if (position >= steps.length) reset();
+        playBtn.textContent = 'pause';
+        advance();
+        timer = setInterval(advance, STEP_INTERVAL_MS);
+      }
+
+      function stopAuto() {
+        if (timer) { clearInterval(timer); timer = null; }
+        playBtn.textContent = position >= steps.length ? 'play again' : 'play';
+      }
+
+      function reset() {
+        stopAuto();
+        position = 0;
+        render();
+        playBtn.textContent = 'play';
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (timer) stopAuto();
+        else startAuto();
+      });
+      stepBtn.addEventListener('click', () => { stopAuto(); advance(); });
+      resetBtn.addEventListener('click', reset);
+
       render();
     })();
   </script>
