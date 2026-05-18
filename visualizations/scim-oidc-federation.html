@@ -399,6 +399,145 @@
       .ca-policy { grid-template-columns: 1fr; }
       .ca-policy .outcome { justify-self: start; }
     }
+
+    /* ------------------------------------------------------------
+       Termination timeline — visualizes the revocation gap.
+       Horizontal timeline 0..120 min, 4 token bars at proportional
+       lifetimes, event markers + a red "gap" strip injected by JS.
+       ------------------------------------------------------------ */
+    .term-demo { display: flex; flex-direction: column; gap: 14px; }
+
+    .term-timeline {
+      padding: 16px 16px 20px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .term-axis {
+      position: relative;
+      height: 18px;
+      margin-left: 120px; margin-right: 70px; margin-bottom: 10px;
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--dim);
+    }
+    .term-axis span {
+      position: absolute; top: 0;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .term-axis span:first-child { transform: translateX(0); }
+    .term-axis span:last-child  { transform: translateX(-100%); }
+
+    .term-body {
+      display: grid;
+      grid-template-columns: 110px 1fr 60px;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .term-labels, .term-metas {
+      display: flex; flex-direction: column;
+      justify-content: space-around;
+      gap: 6px;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--dim);
+    }
+    .term-metas { text-align: right; }
+
+    .term-bars {
+      position: relative;
+      padding-top: 28px; /* room for event labels */
+    }
+    .bar-row {
+      height: 18px; margin-bottom: 6px;
+      background: var(--panel-2);
+      border-radius: 3px;
+      position: relative;
+      overflow: visible;
+    }
+    .bar-row:last-of-type { margin-bottom: 0; }
+    .bar {
+      position: absolute;
+      left: 0; top: 0; height: 100%;
+      border-radius: 3px;
+      transition: width 500ms ease-out;
+    }
+    .bar.id-token      { background: var(--acc-2); }
+    .bar.access-token  { background: var(--acc-2); }
+    .bar.refresh-token {
+      width: 100%;
+      background: linear-gradient(90deg, var(--acc-4) 0%, var(--acc-4) 88%, transparent 100%);
+    }
+    .bar.session       { background: var(--acc-2); }
+
+    /* Events overlay — sits inside .term-bars (relative parent) */
+    .term-event {
+      position: absolute;
+      top: 22px; bottom: 0;
+      width: 2px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 300ms;
+    }
+    .term-event.visible { opacity: 1; }
+    .term-event .ev-label {
+      position: absolute;
+      top: -22px;
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      padding: 1px 5px; border-radius: 3px;
+      background: var(--panel-2);
+    }
+    .term-event .ev-label.right { left: 5px; }
+    .term-event .ev-label.left  { right: 5px; }
+    .term-event .ev-label.below { top: 0; }
+
+    .term-event.term     { background: var(--acc-5); }
+    .term-event.term .ev-label { color: var(--acc-5); border: 1px solid var(--acc-5); }
+    .term-event.scim     { background: var(--acc-1); }
+    .term-event.scim .ev-label { color: var(--acc-1); border: 1px solid var(--acc-1); }
+    .term-event.cae      { background: var(--acc-3); }
+    .term-event.cae .ev-label { color: var(--acc-3); border: 1px solid var(--acc-3); }
+
+    /* Revocation gap strip — red highlight from termination to session end */
+    .term-gap {
+      position: absolute;
+      top: 22px; bottom: 0;
+      background: var(--acc-5-soft);
+      border-left: 2px dashed var(--acc-5);
+      border-right: 2px dashed var(--acc-5);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 300ms, left 400ms ease-out, width 400ms ease-out;
+    }
+    .term-gap.visible { opacity: 1; }
+
+    .term-status {
+      padding: 14px 18px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px; line-height: 1.6;
+      transition: background 300ms, border-color 300ms;
+    }
+    .term-status.bad  { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .term-status.good { background: var(--acc-3-soft); border-color: var(--acc-3); }
+    .term-status .headline {
+      font-family: var(--font-display); font-weight: 700; font-size: 16px;
+      margin-bottom: 4px;
+      color: var(--text-strong);
+      transition: color 300ms;
+    }
+    .term-status.bad .headline  { color: var(--acc-5); }
+    .term-status.good .headline { color: var(--acc-3); }
+    .term-status .detail { color: var(--text-2); }
+
+    .btn.cae-on { background: var(--acc-3); border-color: var(--acc-3); color: var(--text-strong); }
+
+    @media (max-width: 720px) {
+      .term-body { grid-template-columns: 70px 1fr 50px; gap: 6px; }
+      .term-axis { margin-left: 80px; margin-right: 60px; font-size: 9px; }
+      .term-labels, .term-metas { font-size: 10px; }
+      .term-event .ev-label { font-size: 9px; }
+    }
   </style>
 </head>
 <body>
@@ -900,15 +1039,71 @@
 
         <div class="stage">
           <div class="stage-toolbar">
-            <div class="stage-title">Termination timeline &mdash; SCIM sync, session cookie, CAE</div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>fire user at 2pm</button>
+            <div class="stage-title">Termination timeline &mdash; the revocation gap</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="termReset">reset</button>
+              <button class="btn ghost" id="termCae">CAE: off</button>
+              <button class="btn" id="termFire">fire user at t=30 min</button>
             </div>
           </div>
-          <div class="stage-placeholder">
-            <strong>What the animation will show:</strong> a horizontal timeline starting at login. Bars for ID Token, Access Token, Refresh Token, and the GitHub session cookie extend at their real relative durations. Press <em>fire user at 2pm</em> and a vertical marker appears &mdash; SCIM sync fires ~40 minutes later, but the session cookie bar stays green well past that. The red gap is visualized. Toggle CAE on and the gap collapses to seconds. This is the single best teaching moment in the page.
+
+          <div class="term-demo">
+            <div class="term-timeline">
+              <div class="term-axis">
+                <span style="left: 0%">0</span>
+                <span style="left: 25%">30 min</span>
+                <span style="left: 50%">60 min</span>
+                <span style="left: 75%">90 min</span>
+                <span style="left: 100%">120 min</span>
+              </div>
+
+              <div class="term-body">
+                <div class="term-labels">
+                  <div>ID Token</div>
+                  <div>Access Token</div>
+                  <div>Refresh Token</div>
+                  <div>Session Cookie</div>
+                </div>
+
+                <div class="term-bars" id="termBars">
+                  <div class="bar-row">
+                    <div class="bar id-token" style="width: 50%"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar access-token" style="width: 50%"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar refresh-token"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar session" id="termSessionBar" style="width: 83.3%"></div>
+                  </div>
+
+                  <div class="term-gap" id="termGap"></div>
+                  <div class="term-event term" id="termEventTerm" style="left: 25%;">
+                    <span class="ev-label right">user fired (t=30)</span>
+                  </div>
+                  <div class="term-event cae" id="termEventCae" style="left: 26.7%;">
+                    <span class="ev-label right below">CAE event (t=32)</span>
+                  </div>
+                  <div class="term-event scim" id="termEventScim" style="left: 58.3%;">
+                    <span class="ev-label right">SCIM deprovision (t=70)</span>
+                  </div>
+                </div>
+
+                <div class="term-metas">
+                  <div>~1 hr</div>
+                  <div>~1 hr</div>
+                  <div>days &rarr;</div>
+                  <div>hours</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="term-status" id="termStatus">
+              <div class="headline" id="termHeadline">Login at t=0 &mdash; all tokens valid.</div>
+              <div class="detail" id="termDetail">Press <strong>fire user</strong> to simulate termination, then toggle <strong>CAE</strong> to see how Continuous Access Evaluation collapses the gap.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1120,9 +1315,8 @@
       <div class="container">
         <span class="sec-eyebrow">where this page is going</span>
         <h2>More interactive walkthroughs, landing one at a time</h2>
-        <p>PKCE, the OIDC sequence, and the Conditional Access simulator are live above. Three more demos remain:</p>
+        <p>PKCE, the OIDC sequence, the Conditional Access simulator, and the termination timeline are live above. Two more demos remain:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>Termination timeline &mdash; the revocation gap and what CAE does to it</li>
           <li>SCIM lifecycle ticker (fleet-cell animation of POST / PATCH / DELETE)</li>
           <li>Phishing simulator (password submits, FIDO2 refuses the wrong origin)</li>
         </ol>
@@ -1465,6 +1659,113 @@
       });
 
       evaluate();
+    })();
+
+    // Termination timeline — revocation-gap visualizer
+    (function () {
+      const bars = document.getElementById('termBars');
+      if (!bars) return;
+
+      const fireBtn  = document.getElementById('termFire');
+      const caeBtn   = document.getElementById('termCae');
+      const resetBtn = document.getElementById('termReset');
+
+      const sessionBar = document.getElementById('termSessionBar');
+      const evTerm = document.getElementById('termEventTerm');
+      const evScim = document.getElementById('termEventScim');
+      const evCae  = document.getElementById('termEventCae');
+      const gap    = document.getElementById('termGap');
+
+      const statusEl   = document.getElementById('termStatus');
+      const headlineEl = document.getElementById('termHeadline');
+      const detailEl   = document.getElementById('termDetail');
+
+      // Time constants, in minutes. Timeline shows 0..120.
+      const TIMELINE_MAX = 120;
+      const SESSION_COOKIE_LIFE = 100;   // ~hours, compressed for the demo
+      const TERMINATION_T = 30;
+      const SCIM_SYNC_DELAY = 40;        // termination -> SCIM deprovision
+      const CAE_PROPAGATION_DELAY = 2;   // termination -> CAE-driven session kill
+      const SCIM_T = TERMINATION_T + SCIM_SYNC_DELAY;     // 70
+      const CAE_T  = TERMINATION_T + CAE_PROPAGATION_DELAY; // 32
+
+      const pct = m => (m / TIMELINE_MAX) * 100 + '%';
+      const SESSION_FULL_PCT = (SESSION_COOKIE_LIFE / TIMELINE_MAX) * 100;
+      const SESSION_CUT_PCT  = (CAE_T / TIMELINE_MAX) * 100;
+
+      let terminated = false;
+      let caeOn = false;
+
+      function render() {
+        // Session bar width depends on CAE state once terminated
+        if (terminated && caeOn) {
+          sessionBar.style.width = SESSION_CUT_PCT + '%';
+        } else {
+          sessionBar.style.width = SESSION_FULL_PCT + '%';
+        }
+
+        // Event markers
+        evTerm.classList.toggle('visible', terminated);
+        evScim.classList.toggle('visible', terminated);
+        evCae.classList.toggle('visible', terminated && caeOn);
+
+        // Revocation gap strip
+        if (terminated) {
+          const endT = caeOn ? CAE_T : SESSION_COOKIE_LIFE;
+          gap.style.left  = pct(TERMINATION_T);
+          gap.style.width = ((endT - TERMINATION_T) / TIMELINE_MAX * 100) + '%';
+          gap.classList.add('visible');
+        } else {
+          gap.classList.remove('visible');
+        }
+
+        // Status panel + buttons
+        statusEl.classList.remove('bad', 'good');
+        if (!terminated) {
+          headlineEl.textContent = 'Login at t=0 — all tokens valid.';
+          detailEl.textContent = 'Press fire user to simulate termination, then toggle CAE to see how Continuous Access Evaluation collapses the gap.';
+          fireBtn.disabled = false;
+          fireBtn.textContent = 'fire user at t=30 min';
+        } else if (caeOn) {
+          statusEl.classList.add('good');
+          headlineEl.textContent = 'Revocation gap: ~2 minutes';
+          detailEl.textContent = 'User terminated at t=30. CAE pushed the event to GitHub within seconds; the session cookie was killed at t≈32. SCIM still runs its sync cycle at t=70, but the active session was already gone.';
+          fireBtn.disabled = true;
+          fireBtn.textContent = 'fired at t=30';
+        } else {
+          statusEl.classList.add('bad');
+          headlineEl.textContent = 'Revocation gap: 70 minutes';
+          detailEl.textContent = 'User terminated at t=30. SCIM deprovisions at t=70 (40-min sync cycle). But the session cookie remains valid until t=100. The user retains access for the entire 70-minute gap — long enough to push code, exfiltrate data, or sabotage a release.';
+          fireBtn.disabled = true;
+          fireBtn.textContent = 'fired at t=30';
+        }
+
+        caeBtn.classList.toggle('cae-on', caeOn);
+        caeBtn.textContent = caeOn ? 'CAE: on' : 'CAE: off';
+      }
+
+      function fireUser() {
+        if (terminated) return;
+        terminated = true;
+        render();
+      }
+
+      function toggleCae() {
+        caeOn = !caeOn;
+        render();
+      }
+
+      function reset() {
+        terminated = false;
+        caeOn = false;
+        render();
+      }
+
+      fireBtn.addEventListener('click', fireUser);
+      caeBtn.addEventListener('click', toggleCae);
+      resetBtn.addEventListener('click', reset);
+
+      render();
     })();
   </script>
 </body>
