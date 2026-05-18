@@ -633,6 +633,123 @@
       .scim-meter .m-value { font-size: 14px; }
       .scim-log .log-entry { grid-template-columns: 1fr; gap: 2px; }
     }
+
+    /* ------------------------------------------------------------
+       Phishing simulator — side-by-side comparison.
+       Two columns (Password / FIDO2), one scenario toggle. URL bars
+       and column state classes carry the "danger" signal; outcome
+       panels show what actually happens for each method.
+       ------------------------------------------------------------ */
+    .phish-controls {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 4px; flex-wrap: wrap;
+    }
+    .phish-controls .label {
+      font-family: var(--font-mono); font-size: 11px;
+      letter-spacing: 0.08em; color: var(--dim);
+    }
+
+    .phish-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .phish-col {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 14px; border-radius: var(--radius);
+      background: var(--panel-2); border: 1px solid var(--border-2);
+    }
+    .phish-method {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+
+    .phish-browser {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 12px;
+      transition: background 250ms, border-color 250ms;
+    }
+    .phish-browser .phish-icon { display: inline-flex; flex-shrink: 0; color: var(--acc-3); }
+    .phish-browser .ico-bad { display: none; }
+    .phish-browser .domain {
+      color: var(--text);
+      flex: 1;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      transition: color 250ms;
+    }
+    .phish-col.phishing .phish-browser {
+      background: var(--acc-5-soft); border-color: var(--acc-5);
+    }
+    .phish-col.phishing .phish-browser .phish-icon { color: var(--acc-5); }
+    .phish-col.phishing .phish-browser .ico-good { display: none; }
+    .phish-col.phishing .phish-browser .ico-bad  { display: inline-block; }
+    .phish-col.phishing .phish-browser .domain { color: var(--acc-5); }
+
+    .phish-form, .phish-prompt {
+      padding: 16px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .phish-form-row { display: flex; flex-direction: column; gap: 4px; }
+    .phish-form-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim);
+    }
+    .phish-form-input {
+      font-family: var(--font-mono); font-size: 13px;
+      padding: 7px 10px;
+      background: var(--panel-2); border: 1px solid var(--border-2);
+      border-radius: 3px; color: var(--text);
+    }
+    .phish-prompt { text-align: center; align-items: center; padding: 22px 16px; }
+    .phish-key-icon { color: var(--acc-3); margin-bottom: 4px; }
+    .phish-col.phishing .phish-key-icon { color: var(--acc-5); transition: color 250ms; }
+    .phish-prompt-text { font-size: 13px; color: var(--text-2); }
+
+    .phish-submit {
+      margin-top: 4px; padding: 8px 14px;
+      background: var(--acc-1); color: var(--text-strong);
+      border: none; border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 12px;
+      letter-spacing: 0.04em; cursor: pointer;
+      transition: background 200ms;
+    }
+    .phish-submit:hover:not(:disabled) { filter: brightness(1.1); }
+    .phish-submit:disabled {
+      background: var(--panel-2); color: var(--dim);
+      cursor: default;
+    }
+
+    .phish-outcome {
+      padding: 14px 16px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      transition: background 300ms, border-color 300ms;
+    }
+    .phish-outcome .o-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .phish-outcome .o-text {
+      font-size: 12px; color: var(--text-2); line-height: 1.55;
+      transition: color 300ms;
+    }
+    .phish-outcome.success {
+      background: var(--acc-3-soft); border-color: var(--acc-3);
+    }
+    .phish-outcome.success .o-text { color: var(--acc-3); }
+    .phish-outcome.failure {
+      background: var(--acc-5-soft); border-color: var(--acc-5);
+    }
+    .phish-outcome.failure .o-text { color: var(--acc-5); }
+
+    @media (max-width: 720px) {
+      .phish-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -983,15 +1100,91 @@
 
         <div class="stage" style="margin-top: 22px;">
           <div class="stage-toolbar">
-            <div class="stage-title">Phishing simulator &mdash; password vs FIDO2 on <code>evil-login.com</code></div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>land on phishing site</button>
+            <div class="stage-title">Phishing simulator &mdash; password vs FIDO2, same scenario</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="phishReset">reset</button>
             </div>
           </div>
-          <div class="stage-placeholder">
-            <strong>What the animation will show:</strong> User clicks a link that points to <code>evil-login.com</code> instead of <code>login.microsoftonline.com</code>. The password method submits credentials to the attacker (red). The FIDO2 authenticator refuses to respond because its key is bound to the <em>exact origin</em> of the original registration (green). The private key never leaves the device. This is the difference, made tangible.
+
+          <div class="phish-controls">
+            <span class="label">Scenario</span>
+            <div class="ca-segment" id="phishScenario" data-signal="scenario">
+              <button data-value="legit" class="active">legitimate site</button>
+              <button data-value="phish">phishing site</button>
+            </div>
+          </div>
+
+          <div class="phish-grid">
+            <!-- Password column -->
+            <div class="phish-col" id="phishPwCol">
+              <div class="phish-method">Method &middot; Password + MFA</div>
+              <div class="phish-browser">
+                <span class="phish-icon">
+                  <svg class="ico-good" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                  <svg class="ico-bad" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </span>
+                <span class="domain" id="phishPwDomain">login.microsoftonline.com</span>
+              </div>
+              <div class="phish-form">
+                <div class="phish-form-row">
+                  <div class="phish-form-label">email</div>
+                  <div class="phish-form-input">alice@bank.com</div>
+                </div>
+                <div class="phish-form-row">
+                  <div class="phish-form-label">password</div>
+                  <div class="phish-form-input">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</div>
+                </div>
+                <button class="phish-submit" id="phishPwSubmit">submit credentials</button>
+              </div>
+              <div class="phish-outcome" id="phishPwOutcome">
+                <div class="o-label">outcome</div>
+                <div class="o-text" id="phishPwText">Press the button to submit credentials.</div>
+              </div>
+            </div>
+
+            <!-- FIDO2 column -->
+            <div class="phish-col" id="phishF2Col">
+              <div class="phish-method">Method &middot; FIDO2 / WebAuthn</div>
+              <div class="phish-browser">
+                <span class="phish-icon">
+                  <svg class="ico-good" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                  <svg class="ico-bad" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </span>
+                <span class="domain" id="phishF2Domain">login.microsoftonline.com</span>
+              </div>
+              <div class="phish-prompt">
+                <div class="phish-key-icon">
+                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                  </svg>
+                </div>
+                <div class="phish-prompt-text">Tap your security key to sign in.</div>
+                <button class="phish-submit" id="phishF2Submit">tap security key</button>
+              </div>
+              <div class="phish-outcome" id="phishF2Outcome">
+                <div class="o-label">outcome</div>
+                <div class="o-text" id="phishF2Text">Press the button to invoke the authenticator.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout" style="margin-top: 18px;">
+            <strong>Why FIDO2 wins:</strong> The authenticator signs a challenge for the <em>exact origin</em> the browser is requesting it for. There is no "user typo and submit" mistake to make &mdash; the device either has a credential registered for that origin or it doesn't. The cryptographic binding is enforced by silicon, not by the user remembering to check the URL.
           </div>
         </div>
 
@@ -1432,11 +1625,16 @@
     <!-- ============== ROADMAP NOTE ============== -->
     <section class="section">
       <div class="container">
-        <span class="sec-eyebrow">where this page is going</span>
-        <h2>One more walkthrough to land</h2>
-        <p>PKCE, the OIDC sequence, the Conditional Access simulator, the termination timeline, and the SCIM lifecycle ticker are live above. One demo remains:</p>
+        <span class="sec-eyebrow">page complete</span>
+        <h2>All six interactive walkthroughs are live</h2>
+        <p>Each placeholder stage on this page is now a working demo:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>Phishing simulator (password submits, FIDO2 refuses the wrong origin)</li>
+          <li>OIDC sequence diagram &middot; play through the 8-step Authorization Code flow (§5)</li>
+          <li>PKCE handshake &middot; verifier vs challenge, with an attacker-intercept toggle (§6)</li>
+          <li>Phishing simulator &middot; password leaks, FIDO2 refuses the wrong origin (§7)</li>
+          <li>Conditional Access policy simulator &middot; signals in, decision out (§8)</li>
+          <li>Termination timeline &middot; the revocation gap and how CAE collapses it (§9)</li>
+          <li>SCIM lifecycle ticker &middot; events queue at Entra, sync drains them into GitHub (§10)</li>
         </ol>
       </div>
     </section>
@@ -2139,6 +2337,106 @@
       renderMeter();
       renderQueue();
       renderLog();
+    })();
+
+    // Phishing simulator — side-by-side comparison of password vs FIDO2
+    (function () {
+      const pwCol = document.getElementById('phishPwCol');
+      if (!pwCol) return;
+
+      const f2Col   = document.getElementById('phishF2Col');
+      const segment = document.getElementById('phishScenario');
+      const pwDomain = document.getElementById('phishPwDomain');
+      const f2Domain = document.getElementById('phishF2Domain');
+      const pwSubmit = document.getElementById('phishPwSubmit');
+      const f2Submit = document.getElementById('phishF2Submit');
+      const pwOutcome = document.getElementById('phishPwOutcome');
+      const f2Outcome = document.getElementById('phishF2Outcome');
+      const pwText  = document.getElementById('phishPwText');
+      const f2Text  = document.getElementById('phishF2Text');
+      const resetBtn = document.getElementById('phishReset');
+
+      const LEGIT_DOMAIN = 'login.microsoftonline.com';
+      const PHISH_DOMAIN = 'evil-login.com';
+
+      const IDLE_PW = 'Press the button to submit credentials.';
+      const IDLE_F2 = 'Press the button to invoke the authenticator.';
+
+      const OUTCOMES = {
+        pw: {
+          legit: 'Credentials sent to Entra over TLS. MFA challenge succeeds. Login completes. (Note: still phishable if the user later types this password on a fake site.)',
+          phish: 'Credentials POSTed to evil-login.com. The attacker now has the password — and likely the MFA challenge response too, if they relay it in real time. Account compromised.'
+        },
+        f2: {
+          legit: 'Browser asks the authenticator to sign a challenge for login.microsoftonline.com. Authenticator finds the registered credential, signs with its private key, returns the signature. Login completes.',
+          phish: 'Browser asks the authenticator to sign a challenge bound to evil-login.com. No credential is registered for that origin. Authenticator refuses to respond. No data sent to the attacker. User is safe.'
+        }
+      };
+
+      let scenario = 'legit';
+      let pwSubmitted = false;
+      let f2Submitted = false;
+
+      function render() {
+        const isPhish = scenario === 'phish';
+        pwDomain.textContent = isPhish ? PHISH_DOMAIN : LEGIT_DOMAIN;
+        f2Domain.textContent = isPhish ? PHISH_DOMAIN : LEGIT_DOMAIN;
+        pwCol.classList.toggle('phishing', isPhish);
+        f2Col.classList.toggle('phishing', isPhish);
+
+        pwOutcome.classList.remove('success', 'failure');
+        f2Outcome.classList.remove('success', 'failure');
+
+        if (pwSubmitted) {
+          pwText.textContent = OUTCOMES.pw[scenario];
+          pwOutcome.classList.add(isPhish ? 'failure' : 'success');
+          pwSubmit.disabled = true;
+          pwSubmit.textContent = 'submitted';
+        } else {
+          pwText.textContent = IDLE_PW;
+          pwSubmit.disabled = false;
+          pwSubmit.textContent = 'submit credentials';
+        }
+
+        if (f2Submitted) {
+          f2Text.textContent = OUTCOMES.f2[scenario];
+          // FIDO2 is "success" in both scenarios — either it auths cleanly, or it
+          // refuses to respond (which is the right outcome from the user's standpoint).
+          f2Outcome.classList.add('success');
+          f2Submit.disabled = true;
+          f2Submit.textContent = isPhish ? 'refused by authenticator' : 'authenticator signed';
+        } else {
+          f2Text.textContent = IDLE_F2;
+          f2Submit.disabled = false;
+          f2Submit.textContent = 'tap security key';
+        }
+      }
+
+      function setScenario(s) {
+        if (scenario === s) return;
+        scenario = s;
+        pwSubmitted = false;
+        f2Submitted = false;
+        segment.querySelectorAll('button').forEach(b => {
+          b.classList.toggle('active', b.dataset.value === s);
+        });
+        render();
+      }
+
+      segment.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => setScenario(btn.dataset.value));
+      });
+
+      pwSubmit.addEventListener('click', () => { pwSubmitted = true; render(); });
+      f2Submit.addEventListener('click', () => { f2Submitted = true; render(); });
+
+      resetBtn.addEventListener('click', () => {
+        pwSubmitted = false;
+        f2Submitted = false;
+        render();
+      });
+
+      render();
     })();
   </script>
 </body>
