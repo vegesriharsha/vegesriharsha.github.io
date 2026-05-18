@@ -290,6 +290,115 @@
     }
     .oidc-status .msg { color: var(--text-2); }
     .oidc-status.back-channel .msg { color: var(--acc-6); }
+
+    /* ------------------------------------------------------------
+       Conditional Access policy simulator — reactive widget.
+       Signals (segmented controls) feed an evaluator that updates
+       the decision panel and a per-policy log. Strictest wins.
+       ------------------------------------------------------------ */
+    .ca-signal { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .ca-signal-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .ca-segment {
+      display: flex; gap: 2px; padding: 3px;
+      background: var(--panel-2); border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .ca-segment button {
+      flex: 1; padding: 7px 8px;
+      background: transparent; border: none; border-radius: calc(var(--radius) - 3px);
+      color: var(--text-2); font-size: 12px; font-family: inherit;
+      cursor: pointer;
+      transition: background 200ms, color 200ms;
+    }
+    .ca-segment button:hover { color: var(--text-strong); }
+    .ca-segment button.active {
+      background: var(--acc-1); color: var(--text-strong);
+    }
+
+    .ca-decision {
+      padding: 22px 20px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      text-align: center;
+      transition: background 300ms, border-color 300ms;
+    }
+    .ca-decision .label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 10px;
+    }
+    .ca-decision .result {
+      font-family: var(--font-display); font-size: 20px;
+      font-weight: 800; color: var(--text-strong);
+      margin-bottom: 10px; letter-spacing: 0.02em;
+      transition: color 300ms;
+    }
+    .ca-decision .reason {
+      font-size: 12px; color: var(--text-2);
+      line-height: 1.55;
+    }
+    .ca-decision.allow  { background: var(--acc-3-soft); border-color: var(--acc-3); }
+    .ca-decision.allow  .result { color: var(--acc-3); }
+    .ca-decision.mfa    { background: var(--acc-2-soft); border-color: var(--acc-2); }
+    .ca-decision.mfa    .result { color: var(--acc-2); }
+    .ca-decision.stepup { background: var(--acc-4-soft); border-color: var(--acc-4); }
+    .ca-decision.stepup .result { color: var(--acc-4); }
+    .ca-decision.device { background: var(--acc-4-soft); border-color: var(--acc-4); }
+    .ca-decision.device .result { color: var(--acc-4); }
+    .ca-decision.block  { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .ca-decision.block  .result { color: var(--acc-5); }
+
+    .ca-section-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 12px;
+    }
+
+    .ca-policies { display: flex; flex-direction: column; gap: 6px; }
+    .ca-policy {
+      display: grid; grid-template-columns: 1fr auto;
+      gap: 12px; align-items: center;
+      padding: 10px 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      opacity: 0.45;
+      transition: opacity 250ms, border-color 250ms, box-shadow 250ms, background 250ms;
+    }
+    .ca-policy.fires { opacity: 1; }
+    .ca-policy.fires.winner {
+      background: var(--panel-2);
+      border-color: var(--acc-1);
+      box-shadow: 0 0 0 1px var(--acc-1);
+    }
+    .ca-policy.fires.winner.blocks {
+      border-color: var(--acc-5);
+      box-shadow: 0 0 0 1px var(--acc-5);
+    }
+    .ca-policy .name {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--text-strong);
+    }
+    .ca-policy .desc { font-size: 11px; color: var(--dim); margin-top: 2px; line-height: 1.45; }
+    .ca-policy .outcome {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 4px 10px; border-radius: 3px;
+      background: var(--panel-2); color: var(--dim);
+      white-space: nowrap;
+      transition: background 250ms, color 250ms;
+    }
+    .ca-policy.fires .outcome { background: var(--acc-1-soft); color: var(--acc-1); }
+    .ca-policy.fires.blocks .outcome { background: var(--acc-5-soft); color: var(--acc-5); }
+    .ca-policy.fires.winner .outcome { background: var(--acc-1); color: var(--text-strong); }
+    .ca-policy.fires.winner.blocks .outcome { background: var(--acc-5); color: var(--text-strong); }
+
+    @media (max-width: 720px) {
+      .ca-policy { grid-template-columns: 1fr; }
+      .ca-policy .outcome { justify-self: start; }
+    }
   </style>
 </head>
 <body>
@@ -667,20 +776,91 @@
 
         <div class="stage" style="margin-top: 20px;">
           <div class="stage-toolbar">
-            <div class="stage-title">CA policy simulator &mdash; signals in, decision out</div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span class="stage-status">interactive walkthrough coming</span>
-              <button class="btn ghost" disabled>reset</button>
-              <button class="btn" disabled>evaluate</button>
+            <div class="stage-title">Conditional Access policy simulator</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="caReset">reset signals</button>
             </div>
           </div>
-          <div class="stage-placeholder">
-            <strong>What the simulator will show:</strong> toggle inputs (device compliant? corporate network? user risk score? which app?) and watch CA emit a decision (allow / require MFA step-up / require compliant device / block).
-            <ul>
-              <li><strong>Signals (inputs):</strong> device compliance, network location, user risk score, target app, user group membership.</li>
-              <li><strong>Decisions (outputs):</strong> allow, MFA step-up, require compliant device, block.</li>
-              <li><strong>SOX-relevant examples:</strong> "only managed devices can access GitHub", "block access from outside the US", "high-risk users must re-authenticate". Every CA evaluation is logged in Entra sign-in logs &mdash; this is the auditable enforcement layer.</li>
-            </ul>
+
+          <div class="grid grid-2" style="gap: 22px;">
+            <div>
+              <div class="ca-section-label">Signals (inputs)</div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">Device</div>
+                <div class="ca-segment" data-signal="device">
+                  <button data-value="compliant" class="active">compliant</button>
+                  <button data-value="non-compliant">non-compliant</button>
+                </div>
+              </div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">Location</div>
+                <div class="ca-segment" data-signal="location">
+                  <button data-value="corp" class="active">corporate</button>
+                  <button data-value="us-public">US public</button>
+                  <button data-value="outside-us">outside US</button>
+                </div>
+              </div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">User risk score</div>
+                <div class="ca-segment" data-signal="risk">
+                  <button data-value="low" class="active">low</button>
+                  <button data-value="medium">medium</button>
+                  <button data-value="high">high</button>
+                </div>
+              </div>
+
+              <div class="ca-signal" style="margin-bottom: 0;">
+                <div class="ca-signal-label">Target app</div>
+                <div class="ca-segment" data-signal="app">
+                  <button data-value="github" class="active">GitHub</button>
+                  <button data-value="other">other app</button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="ca-section-label">Decision (output)</div>
+              <div class="ca-decision mfa" id="caDecision">
+                <div class="label">Conditional Access verdict</div>
+                <div class="result" id="caResult">REQUIRE MFA</div>
+                <div class="reason" id="caReason">Baseline MFA applies &mdash; user authenticates with MFA and access is granted.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ca-section-label" style="margin-top: 22px;">Policy evaluation</div>
+          <div class="ca-policies" id="caPolicies">
+            <div class="ca-policy" data-policy="block-non-us">
+              <div>
+                <div class="name">block-access-outside-us</div>
+                <div class="desc">Fires when: location is outside the US.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy" data-policy="require-compliant-github">
+              <div>
+                <div class="name">require-compliant-device-for-github</div>
+                <div class="desc">Fires when: target app is GitHub AND device is non-compliant.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy" data-policy="stepup-high-risk">
+              <div>
+                <div class="name">stepup-mfa-for-high-risk-users</div>
+                <div class="desc">Fires when: user risk score is high.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy fires winner" data-policy="baseline-mfa">
+              <div>
+                <div class="name">baseline-mfa-required</div>
+                <div class="desc">Fires always &mdash; catch-all policy. Only "wins" when nothing stricter applies.</div>
+              </div>
+              <div class="outcome">require MFA</div>
+            </div>
           </div>
         </div>
 
@@ -940,9 +1120,8 @@
       <div class="container">
         <span class="sec-eyebrow">where this page is going</span>
         <h2>More interactive walkthroughs, landing one at a time</h2>
-        <p>PKCE and the OIDC sequence are live above. Four more demos remain:</p>
+        <p>PKCE, the OIDC sequence, and the Conditional Access simulator are live above. Three more demos remain:</p>
         <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
-          <li>Conditional Access policy simulator (toggle signals, see decision)</li>
           <li>Termination timeline &mdash; the revocation gap and what CAE does to it</li>
           <li>SCIM lifecycle ticker (fleet-cell animation of POST / PATCH / DELETE)</li>
           <li>Phishing simulator (password submits, FIDO2 refuses the wrong origin)</li>
@@ -1180,6 +1359,112 @@
       resetBtn.addEventListener('click', reset);
 
       render();
+    })();
+
+    // Conditional Access policy simulator — reactive widget
+    (function () {
+      const policiesRoot = document.getElementById('caPolicies');
+      if (!policiesRoot) return;
+
+      const segments   = document.querySelectorAll('.ca-segment[data-signal]');
+      const decisionEl = document.getElementById('caDecision');
+      const resultEl   = document.getElementById('caResult');
+      const reasonEl   = document.getElementById('caReason');
+      const resetBtn   = document.getElementById('caReset');
+
+      const defaults = { device: 'compliant', location: 'corp', risk: 'low', app: 'github' };
+      let signals = Object.assign({}, defaults);
+
+      // Policy definitions. check(s) -> boolean. Severity sort picks the winner.
+      const policies = [
+        {
+          id: 'block-non-us',
+          decision: 'block',
+          check: s => s.location === 'outside-us',
+          outcome: 'block access',
+          reason: 'Location is outside the US. Access blocked outright before any auth proceeds.'
+        },
+        {
+          id: 'require-compliant-github',
+          decision: 'device',
+          check: s => s.app === 'github' && s.device === 'non-compliant',
+          outcome: 'require compliant device',
+          reason: 'Target is GitHub and the device is non-compliant. User must move to a compliant device.'
+        },
+        {
+          id: 'stepup-high-risk',
+          decision: 'stepup',
+          check: s => s.risk === 'high',
+          outcome: 'require MFA step-up',
+          reason: 'User risk score is high. Re-authenticate before access.'
+        },
+        {
+          id: 'baseline-mfa',
+          decision: 'mfa',
+          check: () => true,
+          outcome: 'require MFA',
+          reason: 'Baseline MFA applies — user authenticates with MFA and access is granted.'
+        }
+      ];
+
+      const severityRank = { block: 0, device: 1, stepup: 2, mfa: 3, allow: 4 };
+      const labels = {
+        block:  'BLOCK',
+        device: 'REQUIRE COMPLIANT DEVICE',
+        stepup: 'REQUIRE MFA STEP-UP',
+        mfa:    'REQUIRE MFA',
+        allow:  'ALLOW'
+      };
+      const decisionClasses = ['allow', 'mfa', 'stepup', 'device', 'block'];
+
+      function evaluate() {
+        const firing = policies.filter(p => p.check(signals));
+        firing.sort((a, b) => severityRank[a.decision] - severityRank[b.decision]);
+        const winner = firing[0]; // baseline-mfa always fires, so this is always defined
+
+        decisionClasses.forEach(c => decisionEl.classList.remove(c));
+        decisionEl.classList.add(winner.decision);
+        resultEl.textContent = labels[winner.decision];
+        reasonEl.textContent = winner.reason;
+
+        policies.forEach(p => {
+          const el = policiesRoot.querySelector('[data-policy="' + p.id + '"]');
+          if (!el) return;
+          const fired = p.check(signals);
+          el.classList.remove('fires', 'winner', 'blocks');
+          if (fired) {
+            el.classList.add('fires');
+            if (p.id === winner.id) el.classList.add('winner');
+            if (p.decision === 'block') el.classList.add('blocks');
+          }
+          const outcomeEl = el.querySelector('.outcome');
+          if (outcomeEl) outcomeEl.textContent = fired ? p.outcome : 'does not apply';
+        });
+      }
+
+      function setSignal(name, value) {
+        signals[name] = value;
+        const seg = document.querySelector('.ca-segment[data-signal="' + name + '"]');
+        if (seg) {
+          seg.querySelectorAll('button').forEach(b => {
+            b.classList.toggle('active', b.dataset.value === value);
+          });
+        }
+        evaluate();
+      }
+
+      segments.forEach(seg => {
+        const signalName = seg.dataset.signal;
+        seg.querySelectorAll('button').forEach(btn => {
+          btn.addEventListener('click', () => setSignal(signalName, btn.dataset.value));
+        });
+      });
+
+      resetBtn.addEventListener('click', () => {
+        Object.keys(defaults).forEach(name => setSignal(name, defaults[name]));
+      });
+
+      evaluate();
     })();
   </script>
 </body>
