@@ -7,7 +7,46 @@
    ============================================================ */
 
 window.SITE_CONTENT = {
+  // First series — "Agentic systems at the bank", in logical reading order:
+  // build the agent -> deploy it -> give it memory -> secure it -> evaluate it.
+  // The home grid sorts by date descending, so dates run newest-first to keep
+  // the series in sequence at the top of the Notes column.
   posts: [
+    {
+      title: "Agentic Architecture with Spring AI and Embabel",
+      slug: "agentic-architecture-spring-ai-embabel.html",
+      date: "2026-05-28",
+      summary: "Part 1 — Building agents on the JVM: composition over frameworks, hand-wired workflows in Spring AI, and goal-directed planning in Embabel, and the threshold that separates the two.",
+      tags: ["agents", "spring-ai", "architecture"]
+    },
+    {
+      title: "Deploying Agents on the OpenShift AI POD",
+      slug: "agent-deployment.html",
+      date: "2026-05-27",
+      summary: "Part 2 — Where agents live on the cluster, how requests flow through them, and an honest answer about whether you actually need Python in the stack.",
+      tags: ["agents", "openshift", "deployment"]
+    },
+    {
+      title: "Memory Architecture in Agentic Systems",
+      slug: "memory-architecture-agents.html",
+      date: "2026-05-26",
+      summary: "Part 3 — Production memory for AI agents: working, episodic, semantic, and procedural, across Spring AI agents, batch jobs, and the enterprise platform.",
+      tags: ["agents", "memory", "architecture"]
+    },
+    {
+      title: "Identity Management in Agentic Systems",
+      slug: "identity-management-agents.html",
+      date: "2026-05-25",
+      summary: "Part 4 — Extending OAuth 2.0 patterns: user identity, workload identity, and delegated identity, across Spring AI agents, MCP servers, and the broader enterprise.",
+      tags: ["agents", "identity", "security"]
+    },
+    {
+      title: "Evaluating the Evaluators — AI Eval Architecture",
+      slug: "ai-eval-architecture.html",
+      date: "2026-05-24",
+      summary: "Part 5 — Choosing an architecture for AI quality at the bank: RAGAs, DeepEval, and Promptfoo as three layers of one stack, with a phased plan and paste-ready POCs.",
+      tags: ["agents", "evaluation", "quality"]
+    },
     {
       title: "Welcome — what this site is",
       slug: "welcome.html",

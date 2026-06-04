@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Identity Management in Agentic Systems — my-learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/doc.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="logo" href="../" style="text-decoration:none">
+      <div class="logo-top">my · learnings</div>
+      <div class="logo-main">notes <span>&</span> viz</div>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../">Home</a>
+      <a href="../#posts" class="active">Notes</a>
+      <a href="../#viz">Visualizations</a>
+      <a href="../about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="doc-layout">
+
+<aside class="toc">
+<span class="toc-label">Contents</span>
+<ol>
+  <li><a href="#context">Context and Foundations</a></li>
+  <li><a href="#shift">The Architectural Shift</a></li>
+  <li><a href="#planes">The Three Identity Planes</a></li>
+  <li><a href="#resource-server">User Identity at the Service Boundary</a></li>
+  <li><a href="#workload">Workload Identity in OpenShift</a></li>
+  <li><a href="#exchange">Delegated Identity via Token Exchange</a></li>
+  <li><a href="#spring-ai">Wiring Identity Into Spring AI Agents</a></li>
+  <li><a href="#mcp">MCP Servers in the Delegation Chain</a></li>
+  <li><a href="#long-running">Long-Running Agents and Token Expiry</a></li>
+  <li><a href="#scopes">Scope Design for Agents</a></li>
+  <li><a href="#observability">Observability with Identity Context</a></li>
+  <li><a href="#patterns">Patterns to Establish</a></li>
+  <li><a href="#poc">POC Injection Points</a></li>
+</ol>
+</aside>
+
+<main>
+
+<header class="doc-header">
+<div class="doc-eyebrow">Architecture Learning Document</div>
+<h1>Identity Management in <em>Agentic Systems</em></h1>
+<p class="lede">A working architect's notes on extending OAuth 2.0 patterns — user identity, workload identity, and delegated identity — across Spring AI agents, MCP servers, and the broader enterprise.</p>
+<dl class="doc-meta">
+  <div>
+    <dt>Audience</dt>
+    <dd>Platform, Security, and AI engineering teams</dd>
+  </div>
+  <div>
+    <dt>Scope</dt>
+    <dd>Conceptual foundations + implementation guidance</dd>
+  </div>
+  <div>
+    <dt>Status</dt>
+    <dd>Living document — patterns evolving</dd>
+  </div>
+</dl>
+</header>
+
+<div class="callout">
+<span class="callout-label">Framework versions assumed</span>
+<p>Patterns and code in this document are anchored to: <strong>Spring Boot 3.4+ / 4.0</strong>, <strong>Spring Security 6.3+ / 7.x</strong> (native RFC 8693 token exchange), <strong>Spring AI 1.1.x (stable) or 2.0.x (M-series)</strong>. MCP transport assumes <strong>Streamable HTTP</strong> per MCP spec revision 2025-03-26 (SSE is deprecated). <strong>Spring AI MCP Security modules</strong> are community-driven (group <code>org.springaicommunity</code>) and currently at version 0.1.x — production-suitable but pre-1.0; track for breaking changes. <strong>OpenShift 4.19+</strong> supports direct external OIDC. <strong>PingFederate</strong> supports RFC 8693 token exchange grant; verify it is enabled on your tenant.</p>
+</div>
+
+<!-- ============ SECTION 1 ============ -->
+<section id="context">
+<span class="section-number">§ 01</span>
+<h2>Context and Foundations</h2>
+
+<p>Agentic systems force a re-examination of identity patterns that traditional request/response APIs let us paper over. A deterministic client calling a deterministic service can authenticate once and forward credentials; the failure modes are well understood. An LLM-driven agent introduces non-determinism in tool selection, multi-hop call chains across trust boundaries, and ambient assumptions about &ldquo;acting on behalf of&rdquo; the user that the underlying protocols never made explicit.</p>
+
+<p>The patterns established to solve identity for agents are not narrowly applicable to AI workloads. They are the modern OAuth 2.0 patterns — workload identity federation, token exchange for delegation, audience-bound scopes, full actor chains in audit trails — that every cloud-native service needs once it leaves the comfort of a trusted internal network. The AI use case forces the architectural conversation; the architecture benefits every workload that follows.</p>
+
+<div class="principle">
+<p>The identity patterns we adopt for agents become the identity patterns for everything. Get them right once.</p>
+</div>
+
+<p>This document captures the architectural reasoning, the implementation primitives available in the Spring ecosystem, and the open design decisions that remain. It is intentionally framed in concepts rather than tied to any specific application, so the team can apply the same reasoning to whichever workload comes next.</p>
+</section>
+
+<!-- ============ SECTION 2 ============ -->
+<section id="shift">
+<span class="section-number">§ 02</span>
+<h2>The Architectural Shift</h2>
+
+<p>The traditional service-to-service authentication model — long-lived client credentials issued to a service account, used for the <code>client_credentials</code> grant — is a <strong>machine-to-machine</strong> pattern. It answers one question: <em>which application is calling?</em> It loses the human user entirely. Downstream services see &ldquo;app X called&rdquo; with no notion of which end-user prompted the call.</p>
+
+<p>This model worked when applications were monoliths talking to other monoliths over trusted networks, where the user identity stayed within the originating application's session and never needed to cross service boundaries. It breaks in three distinct ways for modern systems:</p>
+
+<ul>
+  <li><strong>The user identity matters downstream.</strong> Authorization decisions, audit logs, and rate-limiting all depend on knowing &ldquo;which user is this for,&rdquo; not just &ldquo;which app is calling.&rdquo;</li>
+  <li><strong>Workloads no longer have stable machine identities.</strong> Pods on Kubernetes are ephemeral, replicated, and scheduled dynamically. There is no equivalent of the Windows service account tied to a host.</li>
+  <li><strong>An intermediate reasoning layer sits between user and downstream.</strong> An LLM (or any orchestration logic) makes decisions that affect what downstream calls happen. Blindly forwarding the user's original token misses the fact that the agent is the actor; using only the agent's own credentials misses the user entirely.</li>
+</ul>
+
+<p>The shift is from <strong>one identity plane</strong> (the app's machine identity) to <strong>three identity planes</strong>, each with distinct mechanics and purposes.</p>
+</section>
+
+<!-- ============ SECTION 3 ============ -->
+<section id="planes">
+<span class="section-number">§ 03</span>
+<h2>The Three Identity Planes</h2>
+
+<p>Every modern service participates in three identity planes simultaneously. Treating them as one is the root cause of most identity-related architecture problems.</p>
+
+<div class="planes">
+  <div class="plane">
+    <div class="plane-num">PLANE 01</div>
+    <div class="plane-title">User Identity</div>
+    <div class="plane-desc">Who is the end-user whose request is being processed? Established at the edge through OIDC. Carried as a JWT access token. Validated by every service as an OAuth 2.0 resource server.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PLANE 02</div>
+    <div class="plane-title">Workload Identity</div>
+    <div class="plane-desc">Which pod is making this call? Established by the cluster, federated to the IdP. Carried as a short-lived projected ServiceAccount token. Replaces long-lived client secrets entirely.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PLANE 03</div>
+    <div class="plane-title">Delegated Identity</div>
+    <div class="plane-desc">Workload W is acting on behalf of User U toward downstream D. Established via OAuth 2.0 Token Exchange (RFC 8693). Combines subject (user) and actor (workload) into a single audience-scoped token.</div>
+  </div>
+</div>
+
+<p>The remainder of this document treats these planes individually before showing how they compose. The mental model to hold: every outbound call from a service must answer all three questions — &ldquo;who's the user, who's the workload, who's the audience&rdquo; — and the answer is encoded into the token presented at that call.</p>
+</section>
+
+<!-- ============ SECTION 4 ============ -->
+<section id="resource-server">
+<span class="section-number">§ 04</span>
+<h2>User Identity at the Service Boundary</h2>
+
+<p>Every service that accepts user-bound calls must validate the incoming JWT as an OAuth 2.0 resource server. This is the simplest of the three planes, but the most consequential: it is the moment the rest of the system knows who the user is. If this validation is weak or missing, no amount of downstream sophistication recovers the situation.</p>
+
+<h3>What validation must include</h3>
+
+<ul>
+  <li><strong>Signature</strong> against the IdP's published JWKS (rotating keys handled by the library)</li>
+  <li><strong>Issuer</strong> matches the expected IdP issuer URI exactly</li>
+  <li><strong>Audience</strong> includes this service's identifier — a token issued for service A must not validate at service B</li>
+  <li><strong>Expiry and not-before</strong> are within acceptable clock skew</li>
+  <li><strong>Required scopes</strong> are present for the requested operation</li>
+</ul>
+
+<div class="callout warn">
+<span class="callout-label">Common pitfall</span>
+<p>Skipping audience validation is the single most common configuration error. Without it, any token issued by your IdP — for any service — passes validation at every service. The token becomes a bearer credential good across the entire enterprise. Always validate <code>aud</code>.</p>
+</div>
+
+<h3>Spring Security configuration</h3>
+
+<p>The configuration below validates inbound tokens, enforces audience binding, requires a scope for the chat endpoint, and is otherwise stateless.</p>
+
+<pre data-lang="Java"><code>@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Value("${idp.issuer}")
+    private String issuer;
+
+    @Value("${idp.audience}")
+    private String expectedAudience;
+
+    @Bean
+    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeHttpRequests(a -&gt; a
+                .requestMatchers("/actuator/health/**").permitAll()
+                .requestMatchers("/api/chat/**").hasAuthority("SCOPE_chat:invoke")
+                .anyRequest().authenticated())
+            .oauth2ResourceServer(o -&gt; o.jwt(Customizer.withDefaults()))
+            .sessionManagement(s -&gt; s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+        return http.build();
+    }
+
+    @Bean
+    JwtDecoder jwtDecoder() {
+        NimbusJwtDecoder decoder = JwtDecoders.fromIssuerLocation(issuer);
+        OAuth2TokenValidator&lt;Jwt&gt; validators = new DelegatingOAuth2TokenValidator&lt;&gt;(
+            JwtValidators.createDefaultWithIssuer(issuer),
+            new JwtClaimValidator&lt;List&lt;String&gt;&gt;("aud", aud -&gt; aud.contains(expectedAudience))
+        );
+        decoder.setJwtValidator(validators);
+        return decoder;
+    }
+}</code></pre>
+
+<p>Note that the bulk of validation is handled by the framework — the manual addition is the audience check, which Spring Security does not enforce by default and which is non-negotiable.</p>
+</section>
+
+<!-- ============ SECTION 5 ============ -->
+<section id="workload">
+<span class="section-number">§ 05</span>
+<h2>Workload Identity in OpenShift</h2>
+
+<p>The replacement for Windows service accounts (or any pattern that stores a long-lived secret in the workload) is <strong>workload identity federation</strong>. The cluster mints a short-lived, cryptographically signed identity token for each pod, and the IdP is configured to trust the cluster as a federated identity source.</p>
+
+<p>The mechanism: a <strong>projected ServiceAccount token</strong>. Kubernetes mounts a JWT into the pod's filesystem, signed by the cluster's own signing key, with the IdP as the audience. The kubelet auto-rotates the file before expiry. The pod presents this JWT to the IdP, which validates it against the cluster's OIDC discovery endpoint and issues a real access token in return.</p>
+
+<div class="diagram">
+<div class="diagram-title">Workload Identity Federation</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Kubelet</span>
+      <div class="flow-desc">Mints a JWT signed by the cluster, with the IdP as audience. Mounted at <code>/var/run/secrets/&lt;path&gt;/token</code>. Auto-rotated at ~80% of expiry.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Pod</span>
+      <div class="flow-desc">Reads the projected token. Presents it to the IdP as a JWT bearer assertion or as part of a token exchange.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">IdP</span>
+      <div class="flow-desc">Validates the JWT against the cluster's OIDC discovery endpoint (configured as a trusted issuer). Issues a real access token bound to the pod's workload identity.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Pod</span>
+      <div class="flow-desc">Uses the access token for outbound calls. No secret ever lives on disk.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h3>Deployment manifest</h3>
+
+<pre data-lang="YAML"><code>spec:
+  serviceAccountName: claims-agent-sa
+  containers:
+    - name: agent
+      volumeMounts:
+        - name: idp-id-token
+          mountPath: /var/run/secrets/idp
+          readOnly: true
+  volumes:
+    - name: idp-id-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: https://idp.internal
+              expirationSeconds: 3600
+              path: token</code></pre>
+
+<h3>Token loader with rotation awareness</h3>
+
+<pre data-lang="Java"><code>@Component
+public class WorkloadTokenProvider {
+
+    private static final Path TOKEN_PATH = Path.of("/var/run/secrets/idp/token");
+    private final AtomicReference&lt;CachedToken&gt; cache = new AtomicReference&lt;&gt;();
+
+    public String getToken() {
+        CachedToken current = cache.get();
+        if (current == null || current.isStale()) {
+            try {
+                String raw = Files.readString(TOKEN_PATH).trim();
+                cache.set(new CachedToken(raw, Instant.now().plus(Duration.ofMinutes(10))));
+                return raw;
+            } catch (IOException e) {
+                throw new IllegalStateException("Cannot read projected SA token", e);
+            }
+        }
+        return current.token();
+    }
+
+    private record CachedToken(String token, Instant refreshAfter) {
+        boolean isStale() { return Instant.now().isAfter(refreshAfter); }
+    }
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">What this eliminates</span>
+<p>No client secret in the pod. No secret to rotate. No credential to leak in environment variables or logs. The pod's identity is its ServiceAccount, cryptographically provable, ephemeral by construction. This is the single largest security improvement available when moving workloads to OpenShift.</p>
+</div>
+
+<h3>The IdP-side configuration</h3>
+
+<p>The IdP needs to be configured to:</p>
+<ul>
+  <li>Trust the cluster's OIDC discovery endpoint as a token issuer (requires the JWKS endpoint to be reachable from the IdP)</li>
+  <li>Map ServiceAccount identities to internal client/workload identities, typically via a claim-to-client mapping rule</li>
+  <li>Issue access tokens scoped appropriately for the workload's intended downstream calls</li>
+</ul>
+
+<p>This is one-time platform setup. Once in place, every new workload onboarded to the cluster gets identity for free by declaring a ServiceAccount.</p>
+</section>
+
+<!-- ============ SECTION 6 ============ -->
+<section id="exchange">
+<span class="section-number">§ 06</span>
+<h2>Delegated Identity via Token Exchange</h2>
+
+<p>When a service needs to call a downstream API <em>on behalf of</em> a user, neither plain token forwarding nor the workload's own credentials are correct:</p>
+
+<ul>
+  <li><strong>Forwarding the user's token</strong> works but loses the audit trail of which workload performed the action, and over-shares the token to a service that may not be its intended audience.</li>
+  <li><strong>Using only the workload's credentials</strong> loses the user identity entirely — downstream services see &ldquo;agent called&rdquo; but not &ldquo;agent called for user X.&rdquo;</li>
+</ul>
+
+<p>The correct mechanism is <strong>OAuth 2.0 Token Exchange (RFC 8693)</strong>. The service presents the IdP with two tokens:</p>
+
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Value</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>subject_token</code></td><td>User's access token</td><td>The party on whose behalf the call is being made</td></tr>
+    <tr><td><code>actor_token</code></td><td>Workload's identity token</td><td>The party performing the action</td></tr>
+    <tr><td><code>audience</code></td><td>Downstream service URI</td><td>The intended recipient of the new token</td></tr>
+    <tr><td><code>scope</code></td><td>Subset of user's scopes</td><td>Narrowed scope for least privilege</td></tr>
+  </tbody>
+</table>
+
+<p>The IdP returns a new token with <code>sub</code> set to the user, <code>act</code> set to the workload, audience set to the downstream service, and scopes narrowed to what was requested. The downstream service sees the full delegation chain: <em>this call is for user X, performed by workload Y, intended for me.</em></p>
+
+<h3>Spring Security 6.3+ native support</h3>
+
+<p>Spring Security has first-class support for the token-exchange grant type. No custom <code>WebClient</code>, no hand-rolled form posts. Register a client with the token-exchange grant type, and the framework's <code>OAuth2AuthorizedClientManager</code> handles subject token extraction, the exchange call, caching, and refresh.</p>
+
+<pre data-lang="YAML"><code>spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          obo-accounts:
+            provider: idp
+            client-id: ${WORKLOAD_CLIENT_ID}
+            authorization-grant-type: urn:ietf:params:oauth:grant-type:token-exchange
+            scope: account:read
+          obo-claims:
+            provider: idp
+            client-id: ${WORKLOAD_CLIENT_ID}
+            authorization-grant-type: urn:ietf:params:oauth:grant-type:token-exchange
+            scope: claims:read
+        provider:
+          idp:
+            issuer-uri: ${IDP_ISSUER}</code></pre>
+
+<p>One registration per audience. Each registration is scoped narrowly. This is by design: the cost of an extra YAML block is trivial; the audit and security benefits of audience- and scope-specific exchange registrations are substantial.</p>
+
+<pre data-lang="Java"><code>@Bean
+OAuth2AuthorizedClientManager authorizedClientManager(
+        ClientRegistrationRepository clients,
+        OAuth2AuthorizedClientRepository authorizedClients) {
+
+    OAuth2AuthorizedClientProvider provider = OAuth2AuthorizedClientProviderBuilder.builder()
+        .provider(new TokenExchangeOAuth2AuthorizedClientProvider())
+        .build();
+
+    DefaultOAuth2AuthorizedClientManager manager =
+        new DefaultOAuth2AuthorizedClientManager(clients, authorizedClients);
+    manager.setAuthorizedClientProvider(provider);
+    return manager;
+}</code></pre>
+
+<h3>Performing the exchange</h3>
+
+<p>At the point where a downstream call is needed, ask the manager for an authorized client. The framework reads the inbound JWT from the security context as the subject token automatically.</p>
+
+<pre data-lang="Java"><code>OAuth2AuthorizedClient authorized = authorizedClientManager.authorize(
+    OAuth2AuthorizeRequest
+        .withClientRegistrationId("obo-accounts")
+        .principal(SecurityContextHolder.getContext().getAuthentication())
+        .build());
+
+String oboToken = authorized.getAccessToken().getTokenValue();</code></pre>
+
+<p>That is the complete delegation primitive. The exchanged token can now be presented to the downstream service as a bearer credential. The downstream service validates it as a normal resource server and observes the full <code>sub</code> + <code>act</code> chain.</p>
+
+<div class="callout">
+<span class="callout-label">Workload identity as the actor</span>
+<p>The client authentication for the exchange request should use the workload's projected ServiceAccount token (typically via a JWT bearer client authentication method), not a client secret. The IdP needs to accept the federated assertion as client authentication. This is what closes the loop: no secrets, end-to-end.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 7 ============ -->
+<section id="spring-ai">
+<span class="section-number">§ 07</span>
+<h2>Wiring Identity Into Spring AI Agents</h2>
+
+<p>Agents introduce a wrinkle: the LLM decides which tools to call. Identity must be available to the tool implementation at the moment of invocation, but the LLM's tool selection happens on the framework's terms, often on different threads, sometimes in reactive flows. <code>SecurityContextHolder</code> alone is not reliable across that boundary.</p>
+
+<p>The solution Spring AI provides is <strong>ToolContext</strong> — a per-invocation key-value map that travels with the request through the framework, accessible inside the tool method. This is the only clean propagation path.</p>
+
+<h3>Controller — capture the validated user</h3>
+
+<pre data-lang="Java"><code>@RestController
+@RequestMapping("/api/chat")
+class ChatController {
+
+    private final ChatService chatService;
+
+    @PostMapping
+    ChatResponse chat(@RequestBody ChatRequest req,
+                      JwtAuthenticationToken auth) {
+        return chatService.chat(req.message(), auth);
+    }
+}</code></pre>
+
+<h3>Service — propagate the Authentication into ToolContext</h3>
+
+<pre data-lang="Java"><code>@Service
+class ChatService {
+
+    private final ChatClient chatClient;
+    private final AccountTools accountTools;
+
+    String chat(String message, JwtAuthenticationToken auth) {
+        return chatClient.prompt()
+            .user(message)
+            .toolContext(Map.of("authentication", auth))
+            .tools(accountTools)
+            .call()
+            .content();
+    }
+}</code></pre>
+
+<p>The full <code>Authentication</code> object is what <code>OAuth2AuthorizedClientManager</code> needs to extract the subject token. Passing only the raw token string forces brittle reconstruction inside the tool.</p>
+
+<h3>Tool — perform delegation at invocation</h3>
+
+<pre data-lang="Java"><code>@Component
+public class AccountTools {
+
+    private final OAuth2AuthorizedClientManager authorizedClientManager;
+    private final WebClient accountsApi;
+
+    @Tool(description = "Get current balance for one of the member's accounts")
+    public AccountBalance getBalance(
+            @ToolParam(description = "Account identifier") String accountId,
+            ToolContext ctx) {
+
+        Authentication principal = (Authentication) ctx.getContext().get("authentication");
+
+        OAuth2AuthorizedClient authorized = authorizedClientManager.authorize(
+            OAuth2AuthorizeRequest
+                .withClientRegistrationId("obo-accounts")
+                .principal(principal)
+                .build());
+
+        return accountsApi.get()
+            .uri("/accounts/{id}/balance", accountId)
+            .header(HttpHeaders.AUTHORIZATION,
+                    "Bearer " + authorized.getAccessToken().getTokenValue())
+            .retrieve()
+            .bodyToMono(AccountBalance.class)
+            .block();
+    }
+}</code></pre>
+
+<p>The tool participates in the same identity flow as any controller-driven call. The downstream <code>accounts-api</code> validates the token like any resource server and sees the full delegation chain in the claims.</p>
+
+<div class="callout warn">
+<span class="callout-label">Why not SecurityContextHolder</span>
+<p>Spring AI may execute tool methods on threads that do not inherit the security context. Reactive flows discard ThreadLocal entirely. <code>ToolContext</code> is explicit, per-invocation, and survives both — it is also better for auditing because identity propagation is visible in code rather than implicit through framework magic.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 8 ============ -->
+<section id="mcp">
+<span class="section-number">§ 08</span>
+<h2>MCP Servers in the Delegation Chain</h2>
+
+<p>When tools are hosted in remote MCP servers rather than as in-process <code>@Tool</code> methods, the delegation chain extends by one hop. The pattern is the same: every hop is a resource server plus a token-exchange client. Each hop validates the inbound token, performs an exchange to obtain a token audienced for the next hop, and passes that forward.</p>
+
+<p>The Spring AI ecosystem provides this as first-class infrastructure:</p>
+
+<ul>
+  <li><strong>MCP Server Security module</strong> — auto-configures the MCP server as a Spring Security resource server. Inbound JWTs are validated against the configured issuer, audience, and scopes. No custom auth code in the server.</li>
+  <li><strong>MCP Client Security module</strong> — auto-configures OAuth2 client behavior on the MCP transport. The exchanged OBO token is automatically attached as the bearer credential on outbound MCP calls.</li>
+  <li><strong>Spring Security 6.3+ token exchange</strong> — performs the OBO exchange between hops with no additional code beyond YAML registration.</li>
+</ul>
+
+<div class="callout warn">
+<span class="callout-label">Transport: use Streamable HTTP, not SSE</span>
+<p>The MCP specification revision 2025-03-26 deprecated the legacy HTTP+SSE transport in favor of <strong>Streamable HTTP</strong> (single endpoint, supports both synchronous and streaming responses). Spring AI 1.1.7 / 2.0.0-M7 (May 2026) made Streamable HTTP the default server protocol. New MCP servers should use Streamable HTTP exclusively; existing SSE deployments should plan migration. Configure via <code>spring.ai.mcp.server.protocol=STREAMABLE</code>.</p>
+</div>
+
+<div class="callout warn">
+<span class="callout-label">Maturity caveat — Spring AI MCP Security</span>
+<p>The <code>org.springaicommunity</code> MCP Security modules (server, client, authorization server) are community-driven and currently at <strong>version 0.1.x</strong>. The patterns are correct and production-suitable, but the API surface may shift before 1.0. Pin versions explicitly and track the release cadence.</p>
+</div>
+
+<h3>End-to-end delegation chain</h3>
+
+<div class="diagram">
+<div class="diagram-title">Full Delegation Chain — User → Agent → MCP → Downstream</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">User Edge</span>
+      <div class="flow-desc">User authenticates via OIDC. Frontend obtains user access token. Forwards as bearer to agent service.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Agent Service</span>
+      <div class="flow-desc">Validates as resource server. Exchanges user token → OBO token audienced for MCP server. <code>sub</code> = user, <code>act</code> = agent.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">MCP Client Transport</span>
+      <div class="flow-desc">Auto-attaches OBO token to outbound MCP call (auto-configured by Spring AI MCP Client Security).</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">MCP Server</span>
+      <div class="flow-desc">Validates inbound OBO token as resource server. Exchanges again → token audienced for downstream API. <code>sub</code> = user, <code>act</code> = [agent → mcp-server] (chained).</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <span class="flow-actor">Downstream API</span>
+      <div class="flow-desc">Validates and sees the full actor chain. Performs authorization. Logs the complete provenance.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h3>MCP server resource-server configuration</h3>
+
+<pre data-lang="YAML"><code>spring:
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE   # Streamable HTTP — supersedes deprecated SSE
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${IDP_ISSUER}
+      client:
+        registration:
+          obo-downstream:
+            provider: idp
+            client-id: ${MCP_WORKLOAD_CLIENT_ID}
+            authorization-grant-type: urn:ietf:params:oauth:grant-type:token-exchange
+            scope: downstream:read
+        provider:
+          idp:
+            issuer-uri: ${IDP_ISSUER}</code></pre>
+
+<p>This is the same configuration shape as any other service in the chain. There is no MCP-specific identity code — only standard Spring Security primitives applied to the MCP transport.</p>
+
+<h3>The actor chain</h3>
+
+<p>At each hop, the new token's <code>act</code> claim contains the previous actor, recursively. By the time the call reaches the downstream API, the JWT contains a complete chain:</p>
+
+<pre data-lang="JSON"><code>{
+  "sub": "user-12345",
+  "aud": "downstream-api",
+  "iss": "https://idp.internal",
+  "exp": 1700000000,
+  "scope": "downstream:read",
+  "act": {
+    "sub": "mcp-server-claims",
+    "act": {
+      "sub": "agent-service"
+    }
+  }
+}</code></pre>
+
+<p>The downstream API can extract and log this chain to produce audit records of the form: <em>action performed for user-12345, by mcp-server-claims, on behalf of agent-service</em>. Full provenance, no custom plumbing.</p>
+
+<div class="callout">
+<span class="callout-label">Transport caveat</span>
+<p>The resource-server + token-exchange pattern applies to <strong>Streamable HTTP</strong> (and any other network-bound MCP transport). <strong>Stdio</strong> MCP servers run in-process with the agent and inherit its security context directly — there's no network hop, no separate validation needed. If a stdio MCP server makes outbound calls, those follow the same delegation pattern as any in-process tool.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 9 ============ -->
+<section id="long-running">
+<span class="section-number">§ 09</span>
+<h2>Long-Running Agents and Token Expiry</h2>
+
+<p>Short-lived tokens are a security feature. They become a design problem when agent execution time exceeds token lifetime. Three cases arise, each with a different appropriate pattern.</p>
+
+<h3>Case 1 — Multi-turn conversations</h3>
+
+<p>A chat session lasts longer than a single token's lifetime, but the user's browser session remains active. The cleanest pattern: <strong>the frontend always sends a fresh token</strong>. The backing service holds the refresh token (never exposed to the browser), refreshes the access token before each agent call, and sends the current one.</p>
+
+<p>The agent service never has to think about user-token refresh. Each turn is independent. Conversation history is stored by user identifier (from the token's <code>sub</code> claim), but the token itself is request-scoped and never persisted on the agent side.</p>
+
+<h3>Case 2 — Long tool chains within a single turn</h3>
+
+<p>An OBO token's lifetime is bounded by the shorter of subject and actor lifetimes (RFC 8693). If the user's token has 4 minutes left when the agent turn begins, every OBO token minted during the turn shares that ceiling. A 90-second turn with 8 sequential tool calls can fail at tool 6 with a 401.</p>
+
+<p>Two mitigations:</p>
+
+<ul>
+  <li><strong>Front-load token exchange.</strong> If the set of likely tools can be inferred from the LLM's first reasoning step, exchange all OBO tokens up front. All share the same expiry ceiling but you avoid mid-chain refresh complexity.</li>
+  <li><strong>Validate subject token expiry before each tool call.</strong> If the user's token is within (say) 60 seconds of expiry, fail fast with a specific error code the frontend can recognize, prompting refresh-and-retry.</li>
+</ul>
+
+<p>The deeper fix is making token lifetimes long enough for normal agent turns. 15 minutes is generally fine; 5 minutes isn't. This is an IdP configuration decision worth raising — agent workloads have different lifetime needs than CRUD APIs.</p>
+
+<h3>Case 3 — True long-running agents</h3>
+
+<p>An agent that runs for hours, with no active user session to refresh against. This is the architecturally hardest case. Three approaches, in increasing order of correctness:</p>
+
+<ul>
+  <li><strong>Refresh tokens stored server-side.</strong> Capture an OIDC refresh token (<code>offline_access</code> scope) at workflow initiation. Encrypt and store it, associated with the workflow ID. Use it to mint fresh access tokens as needed. Functional but creates a high-value credential at rest.</li>
+  <li><strong>Consent-bound delegation grants.</strong> User explicitly grants the agent a time-bounded, scope-limited delegation (&ldquo;may act as me for these scopes, for 24 hours, for workflow X&rdquo;). Cleaner audit, narrower blast radius, explicit user consent. Requires IdP support for this kind of grant — custom work in most environments.</li>
+  <li><strong>Re-authentication checkpoints.</strong> Agent runs as far as it can. When a step requires fresh user identity, it pauses, notifies the user, the user re-authenticates, the workflow resumes. Most secure, worst UX, appropriate for high-value actions.</li>
+</ul>
+
+<div class="principle">
+<p>Token expiry forces explicit answers to a question that otherwise stays implicit: for how long, and under what conditions, is the agent authorized to act as the user? The right answer depends on the action's risk.</p>
+</div>
+
+<p>Architecturally: long-running agent workflows should be designed with <strong>identity-expiry checkpoints</strong>, not assumed to run with ambient user identity forever. Token lifetime <em>is</em> a security control.</p>
+</section>
+
+<!-- ============ SECTION 10 ============ -->
+<section id="scopes">
+<span class="section-number">§ 10</span>
+<h2>Scope Design for Agents</h2>
+
+<p>Agents amplify the importance of scope design because the LLM's tool selection is non-deterministic. A traditional client's behavior is predictable — scopes can be broad because the developers control what the client does. With an agent, the attack surface becomes <em>whatever the LLM can be convinced to do</em>. Broad scopes are dangerous in a way they aren't for deterministic clients.</p>
+
+<h3>Capability vs. resource scopes</h3>
+
+<p>Two design philosophies, both viable, best combined:</p>
+
+<ul>
+  <li><strong>Capability scopes</strong> describe actions: <code>account:read</code>, <code>transfer:execute</code>, <code>claims:write</code>.</li>
+  <li><strong>Resource scopes</strong> describe data domains: <code>accounts</code>, <code>transfers</code>, <code>claims</code>.</li>
+</ul>
+
+<p>Most mature designs combine them into <code>resource:capability</code> form: <code>account:read</code>, <code>account:write</code>, <code>transfer:execute</code>. This composes cleanly across tools and remains readable in audit logs.</p>
+
+<h3>Scope minimization at exchange</h3>
+
+<p>The single biggest blast-radius reduction lever. When the agent exchanges a user token for an OBO token, it requests <em>only</em> the scopes the specific downstream call needs, not all scopes the user has.</p>
+
+<p>A user token might carry: <code>account:read account:write transfer:execute statements:read</code>.</p>
+<p>The OBO token for a balance lookup should carry only: <code>account:read</code>.</p>
+
+<p>RFC 8693 supports this via the <code>scope</code> parameter on the exchange request. In Spring Security, this is the <code>scope</code> attribute on the client registration. Each downstream call gets the smallest credential that suffices.</p>
+
+<h3>Downscoping, not upscoping</h3>
+
+<p>Token exchange can narrow scopes but never broaden them — the IdP enforces that exchanged scopes are a subset of subject token scopes. This is a security feature: even a compromised agent cannot elevate privilege beyond what the user already has. It shapes how to design the initial user-token scope set.</p>
+
+<h3>Sensitive scopes and step-up authentication</h3>
+
+<p>Some actions should not be reachable by an agent without fresh user re-authentication, regardless of what's in the token. Mark certain scopes as &ldquo;step-up required&rdquo; at the IdP, requiring an <code>acr</code> (Authentication Context Class Reference) claim proving recent strong authentication.</p>
+
+<p>The agent's OBO token will not carry this <code>acr</code> claim unless the user just re-authenticated. Downstream APIs check <code>acr</code> for sensitive operations and reject calls without it. This effectively keeps high-value actions out of the agent's autonomous reach.</p>
+
+<h3>Scope vs. authorization policy</h3>
+
+<p>Scopes describe what a <em>token</em> is allowed to do. They do not replace authorization policy in the downstream API. A common mistake is conflating them.</p>
+
+<table>
+  <thead>
+    <tr><th>Layer</th><th>Question</th><th>Where it lives</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Scope check</td><td>Can this token read accounts?</td><td>Token claims + Spring Security</td></tr>
+    <tr><td>Policy check</td><td>Can <em>this user</em> read <em>this account</em>?</td><td>Application logic + data ownership</td></tr>
+  </tbody>
+</table>
+
+<p>Both checks must happen. Scope is necessary but never sufficient.</p>
+
+<h3>Tool-to-scope mapping</h3>
+
+<p>Each tool should declare which scopes it requires. This becomes documentation, audit material, and the basis for the token-exchange request. Encode it as an annotation, a registry, or part of the tool definition — whatever fits the codebase — but make it explicit and reviewable, not inferred at runtime.</p>
+
+<div class="principle">
+<p>The agent gets the smallest credential that does the job, for the shortest time, against the most specific audience. Everything else is a deviation that requires justification.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 11 ============ -->
+<section id="observability">
+<span class="section-number">§ 11</span>
+<h2>Observability with Identity Context</h2>
+
+<p>Most of what would traditionally be called &ldquo;audit infrastructure&rdquo; for agents is already provided by the LLM-tracing stack — OpenTelemetry plus an LLM-aware backend like Phoenix. The hard parts of agent observability — correlating calls across an agent turn, capturing the causal structure of LLM reasoning and tool invocation, recording prompts and responses — are solved problems via OpenInference semantic conventions.</p>
+
+<p>The identity-specific work is not to build a parallel audit pipeline. It is to <strong>attach identity context to the spans the tracing stack is already producing</strong>, and to forward a subset of those attributes to a dedicated audit sink for compliance retention.</p>
+
+<h3>What Phoenix/OTel handles natively</h3>
+
+<p>Two semantic-convention layers are relevant here, and they overlap but are not identical:</p>
+
+<ul>
+  <li><strong>OpenTelemetry GenAI semantic conventions</strong> — defines <code>gen_ai.*</code> attributes (model, token usage, finish reasons, system/input/output messages). Client spans for LLM calls reached stable status in early 2026. Agent and framework spans remain experimental but are stable in practice.</li>
+  <li><strong>OpenInference semantic conventions</strong> — Phoenix's native convention set, extending OTel with LLM-application-specific attributes (span kind, tool parameters, embedding vectors) and providing helper context managers (<code>using_user</code>, <code>using_session</code>, <code>using_metadata</code>, <code>using_tags</code>) that attach identity and session attributes to spans idiomatically.</li>
+</ul>
+
+<p>Phoenix accepts both. Use OpenInference helpers when emitting from instrumented code; use raw OTel attributes when interop with non-Phoenix backends matters.</p>
+
+<p>The free wins:</p>
+
+<ul>
+  <li><strong>Correlation across the turn.</strong> Trace context propagates from inbound HTTP through LLM calls, tool invocations, and downstream API calls. One trace equals one user turn.</li>
+  <li><strong>Causal structure.</strong> Parent-child span relationships capture the agent's reasoning tree — prompt → tool selection → tool call → downstream call → next reasoning step.</li>
+  <li><strong>Prompt and response capture.</strong> OpenInference conventions standardize how prompts, completions, tool inputs, and tool outputs land on spans.</li>
+  <li><strong>Operational signal.</strong> Latency, token usage, cost, errors come along for free via <code>gen_ai.*</code>.</li>
+</ul>
+
+<h3>Identity attributes to attach</h3>
+
+<p>The work is in span attributes. At each layer, add identity context:</p>
+
+<table>
+  <thead>
+    <tr><th>Span layer</th><th>Attributes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Agent entry</td>
+      <td><code>user.id</code> (current OTel direction) or <code>enduser.id</code> (legacy but still widely supported); <code>session.id</code>; OpenInference <code>using_user(id)</code> context manager when Python-instrumenting Phoenix directly</td>
+    </tr>
+    <tr>
+      <td>Token exchange</td>
+      <td><code>auth.subject</code>, <code>auth.actor</code>, <code>auth.audience</code>, <code>auth.scopes_requested</code>, <code>auth.scopes_granted</code></td>
+    </tr>
+    <tr>
+      <td>Tool / downstream call</td>
+      <td><code>auth.actor_chain</code>, <code>auth.token_audience</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+<span class="callout-label">User identity attribute is sensitive</span>
+<p>The OTel spec recommends that SDKs <strong>drop <code>enduser.*</code> attributes by default</strong> for PII reasons, with an explicit opt-in to retain them. Verify the SDK's behavior in your environment and treat retention as a deliberate decision — not a default. The newer <code>user.id</code> attribute is positioning as the canonical authenticated-user identifier; <code>enduser.id</code> remains in the spec but its deprecation status is in flux. Pick one, document the choice, and apply it consistently — querying across two attribute names later is painful.</p>
+</div>
+
+<p>With these attributes in place, Phoenix becomes searchable for security questions: <em>show all activity for user X in the last hour</em> becomes a trace filter on the identity attribute.</p>
+
+<h3>What still needs a dedicated audit sink</h3>
+
+<p>Phoenix is operational observability. A few concerns require a separate path:</p>
+
+<ul>
+  <li><strong>Long retention for compliance.</strong> Phoenix is typically tuned for days-to-weeks. Compliance often requires years. Forward security-relevant span attributes to an immutable log store, keyed by trace ID.</li>
+  <li><strong>Tamper-evident storage.</strong> Traces are mutable infrastructure. High-value actions warrant append-only, signed audit records in a hardened store.</li>
+  <li><strong>Stricter access control.</strong> Engineers debugging agent behavior should not incidentally see audit-grade identity data. The audit sink lives behind separate IAM.</li>
+  <li><strong>Consent record references.</strong> If a user granted the agent specific permissions (especially for long-running workflows), the audit log should reference the consent grant ID alongside the action.</li>
+</ul>
+
+<h3>The simplified mental model</h3>
+
+<table>
+  <thead>
+    <tr><th>Concern</th><th>Where it's solved</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Operational + behavioral observability</td><td>Phoenix / OTel — free with the stack</td></tr>
+    <tr><td>Security observability</td><td>Identity attributes on existing spans — cheap addition</td></tr>
+    <tr><td>Compliance / forensics</td><td>Dedicated audit sink, fed from a subset of span attributes</td></tr>
+  </tbody>
+</table>
+
+<p>The design decisions are about which attributes to attach where, and which to forward — not how to build an audit pipeline from scratch.</p>
+</section>
+
+<!-- ============ SECTION 12 ============ -->
+<section id="patterns">
+<span class="section-number">§ 12</span>
+<h2>Patterns to Establish</h2>
+
+<p>These are the principles worth codifying as bank-wide standards, not narrowly as AI patterns. They apply to every new workload deployed to the cluster, AI or otherwise.</p>
+
+<ol>
+  <li><strong>No long-lived secrets in pods.</strong> Workload identity via projected ServiceAccount tokens, federated to the IdP, is the only sanctioned pattern for new in-cluster workloads. Secret stores remain available for legacy and external integrations.</li>
+  <li><strong>Every service is an OAuth 2.0 resource server.</strong> Spring Security <code>oauth2ResourceServer()</code> with JWT validation, issuer pinned, audience enforced, scopes required for sensitive endpoints. No exceptions.</li>
+  <li><strong>User context flows via token exchange, never token forwarding.</strong> Including for non-AI services. The <code>act</code> claim in every downstream call produces a full delegation chain in audit records.</li>
+  <li><strong>Scopes describe capabilities, not roles.</strong> Resource-capability form (<code>account:read</code>). Roles stay in the IdP and map to scopes at token issuance.</li>
+  <li><strong>One exchange-client registration per downstream audience.</strong> Cheap to declare, expensive to skip. Audience-bound, scope-narrowed tokens are the default.</li>
+  <li><strong>Identity context on every trace span.</strong> <code>user.id</code> (or <code>enduser.id</code>, pick one and stick to it) and the <code>act</code> chain at minimum. Trace ID is the join key between operational observability and compliance audit.</li>
+  <li><strong>Token lifetimes calibrated to workload class.</strong> Workload tokens ~1 hour. User access tokens 15 minutes. Exchanged tokens inherit the shorter ceiling. Sensitive scopes require fresh <code>acr</code>.</li>
+  <li><strong>High-value actions require re-authentication.</strong> Step-up via <code>acr</code> claims, enforced at the downstream API. Agents cannot autonomously cross the threshold.</li>
+</ol>
+
+<div class="principle">
+<p>The architecture for AI workloads is the architecture for all modern workloads. The AI use case forces the conversation; the patterns benefit everything that comes after.</p>
+</div>
+</section>
+
+<!-- ============ POC SECTION ============ -->
+<section id="poc" class="poc-section">
+<span class="section-number">§ 13</span>
+<h2>POC Injection Points</h2>
+
+<div class="poc-intro">
+<p>Each POC below is a self-contained scope that exercises one concept from this document. The <strong>Claude Code prompt blocks</strong> are intended as starting points — paste them into a Claude Code session, refine with environment-specific detail (issuer URIs, client IDs, downstream service names), and iterate. POCs are ordered from foundational to compositional; later POCs assume the earlier ones are in place.</p>
+</div>
+
+<!-- POC 1 -->
+<div class="poc-card">
+<div class="poc-id">POC 01</div>
+<div class="poc-title">Resource server validating IdP-issued JWTs</div>
+<div class="poc-scope">Scope · Plane 1 — User identity</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — IdP test tenant with a configured client capable of issuing test access tokens. Issuer URI reachable from the local environment.</div>
+
+<p>Demonstrates that a Spring Boot service can validate inbound JWTs as a resource server, enforce issuer and audience, and require scope for protected endpoints. The smallest possible useful POC.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring Boot 3.x service using Spring Security 6.3+ that acts as an OAuth 2.0 resource server. Requirements:</p>
+<p>1. Validate inbound JWTs against the IdP issuer URI [INSERT_ISSUER_URI].<br>
+2. Enforce audience claim equals [INSERT_EXPECTED_AUDIENCE]; reject tokens with any other audience.<br>
+3. Expose two endpoints: <code>GET /api/echo</code> (requires scope <code>echo:read</code>) and <code>GET /actuator/health</code> (public).<br>
+4. Return the validated JWT's <code>sub</code> claim from <code>/api/echo</code>.<br>
+5. Configure as stateless. No sessions.<br>
+6. Include a test using <code>@SpringBootTest</code> that mints a test JWT with mock authorization server and verifies both happy path and audience rejection.</p>
+<p>Produce: <code>pom.xml</code> (or <code>build.gradle</code>), <code>SecurityConfig.java</code>, <code>EchoController.java</code>, <code>application.yml</code>, and the integration test. Explain any IdP-side configuration assumed.</p>
+</div>
+</div>
+
+<!-- POC 2 -->
+<div class="poc-card">
+<div class="poc-id">POC 02</div>
+<div class="poc-title">Pod-level workload identity via projected ServiceAccount token</div>
+<div class="poc-scope">Scope · Plane 2 — Workload identity</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — OpenShift namespace with permission to create ServiceAccounts and Deployments. IdP configured to trust the cluster's OIDC discovery endpoint as a federated issuer.</div>
+
+<p>Demonstrates that a pod can obtain its identity from a projected ServiceAccount token, exchange it at the IdP, and use the resulting access token for outbound calls — with no long-lived secret on disk.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring Boot 3.x service that runs in OpenShift and authenticates to the IdP using a projected ServiceAccount token (no client secret). Requirements:</p>
+<p>1. Deployment manifest including a <code>serviceAccountToken</code> projected volume mounted at <code>/var/run/secrets/idp/token</code>, audience <code>[INSERT_IDP_AUDIENCE]</code>, expiration 3600s.<br>
+2. A <code>WorkloadTokenProvider</code> component that reads the projected token, caches it with a refresh-after window, and re-reads from disk after staleness.<br>
+3. A <code>/api/whoami</code> endpoint that calls the IdP's introspection or userinfo endpoint using the workload token and returns the resolved workload identity.<br>
+4. Handle token rotation correctly — kubelet rotates the file at ~80% of expiry; the loader must pick up the new value without restart.<br>
+5. Include a test that simulates the rotation by replacing the file mid-test.</p>
+<p>Produce: Deployment YAML, ServiceAccount YAML, <code>WorkloadTokenProvider.java</code>, <code>WhoAmIController.java</code>, <code>application.yml</code>, and the rotation test. Document the IdP-side trust configuration required (OIDC discovery URL, claim mapping).</p>
+</div>
+</div>
+
+<!-- POC 3 -->
+<div class="poc-card">
+<div class="poc-id">POC 03</div>
+<div class="poc-title">Token exchange via native Spring Security 6.3+</div>
+<div class="poc-scope">Scope · Plane 3 — Delegated identity</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 01 and POC 02 complete. IdP configured to support the token-exchange grant type for at least one client registration. A downstream test service that validates audience.</div>
+
+<p>Demonstrates on-behalf-of delegation using only Spring Security configuration — no custom token exchange code. A user token comes in, an OBO token audienced for a downstream service comes out, and a call succeeds against that downstream.</p>
+
+<div class="prompt-injection">
+<p>Extend the POC 01 service to perform OAuth 2.0 Token Exchange (RFC 8693) on a per-request basis, calling a downstream service on behalf of the user whose token authenticated the inbound request. Requirements:</p>
+<p>1. Use Spring Security 6.3+ native token-exchange support via <code>TokenExchangeOAuth2AuthorizedClientProvider</code>. No custom WebClient, no manual form posts.<br>
+2. Register one exchange client (<code>obo-downstream</code>) audienced for [INSERT_DOWNSTREAM_AUDIENCE] with scope <code>downstream:read</code>.<br>
+3. Use the workload identity (projected SA token from POC 02) as the actor token in the exchange. Configure JWT bearer client authentication.<br>
+4. Add an endpoint <code>GET /api/proxy/balance/{id}</code> that performs the exchange and calls the downstream service.<br>
+5. Verify that the downstream service receives a token with <code>sub</code> = original user, <code>act.sub</code> = workload identity, <code>aud</code> = downstream audience, <code>scope</code> = <code>downstream:read</code>.<br>
+6. Implement a minimal companion downstream service that logs the actor chain for verification.</p>
+<p>Produce: updated <code>SecurityConfig.java</code>, <code>application.yml</code> with exchange client registration, the proxy controller, the companion downstream service, and an integration test that asserts on the actor chain.</p>
+</div>
+</div>
+
+<!-- POC 4 -->
+<div class="poc-card">
+<div class="poc-id">POC 04</div>
+<div class="poc-title">Spring AI agent with delegated tool calls</div>
+<div class="poc-scope">Scope · Composition — Identity in agent flow</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–03 complete. Access to an internal LLM endpoint reachable from the cluster.</div>
+
+<p>Demonstrates that user identity propagates correctly through the Spring AI agent flow into tool invocations, and that tools perform OBO exchanges per call. This is the integration test for the agent identity pattern.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring AI agent service that exposes a <code>POST /api/chat</code> endpoint, validates user JWTs, and invokes the LLM with tools that perform on-behalf-of calls to downstream services. Requirements:</p>
+<p>1. Resource server config from POC 01 — validate inbound user tokens.<br>
+2. ChatClient configured against the internal LLM endpoint [INSERT_LLM_URL].<br>
+3. Two <code>@Tool</code> methods: <code>getAccountBalance(accountId)</code> and <code>getRecentTransactions(accountId, limit)</code>. Each calls a different downstream service.<br>
+4. User identity propagated into the <code>ToolContext</code> in the service layer — not via <code>SecurityContextHolder</code>.<br>
+5. Each tool performs its own OBO exchange (using the pattern from POC 03) at invocation time, requesting only the scopes that tool needs.<br>
+6. End-to-end test: a chat request with a valid user JWT triggers an LLM call that invokes one or both tools, and the downstream services log receipt of correctly-formed OBO tokens with the right actor chain.</p>
+<p>Produce: <code>ChatController.java</code>, <code>ChatService.java</code>, <code>AccountTools.java</code>, exchange client registrations in <code>application.yml</code>, and an integration test that mocks the LLM responses to deterministically trigger tool calls. Document how the downstream services would be deployed for end-to-end verification.</p>
+</div>
+</div>
+
+<!-- POC 5 -->
+<div class="poc-card">
+<div class="poc-id">POC 05</div>
+<div class="poc-title">MCP server as resource server with token exchange chain</div>
+<div class="poc-scope">Scope · Composition — Delegation across MCP boundary</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 04 complete. Familiarity with the Spring AI MCP Server and MCP Client Security modules.</div>
+
+<p>Demonstrates the full delegation chain across an MCP hop: agent → MCP server → downstream API, with the actor chain growing at each hop. This proves out the MCP integration pattern end-to-end.</p>
+
+<div class="prompt-injection">
+<p>Implement a delegation chain across an MCP boundary, using Spring AI's MCP Server Security and MCP Client Security modules. Use the <strong>Streamable HTTP</strong> transport (set <code>spring.ai.mcp.server.protocol=STREAMABLE</code>); do not use the deprecated SSE transport. Requirements:</p>
+<p>1. Convert one of the tools from POC 04 (e.g., <code>getAccountBalance</code>) from an in-process <code>@Tool</code> to a remote MCP server tool. The MCP server runs as a separate Spring Boot application using Streamable HTTP.<br>
+2. Configure the MCP server as an OAuth 2.0 resource server using the Spring AI MCP Server Security module (<code>org.springaicommunity:mcp-server-security-spring-boot</code>, current version 0.1.x). It validates inbound JWTs from the agent.<br>
+3. Configure the MCP server with its own workload identity (projected SA token) and its own token-exchange client registration to call the downstream accounts API.<br>
+4. Configure the agent's MCP client to use the Spring AI MCP Client Security module so that OBO tokens are automatically attached to outbound MCP calls.<br>
+5. Verify the resulting JWT at the downstream API has:<br>
+&nbsp;&nbsp;&nbsp;- <code>sub</code> = original user<br>
+&nbsp;&nbsp;&nbsp;- <code>act.sub</code> = MCP server workload identity<br>
+&nbsp;&nbsp;&nbsp;- <code>act.act.sub</code> = agent workload identity<br>
+&nbsp;&nbsp;&nbsp;- <code>aud</code> = accounts API audience<br>
+6. Include an integration test running all three services (agent, MCP server, accounts API) and asserting on the actor chain.</p>
+<p>Produce: the MCP server module, updated agent configuration to use the remote MCP server, updated YAML for all three services, and the multi-service integration test setup (Testcontainers or similar). Document the auto-configuration behaviors of the Spring AI MCP Security modules used, and pin the <code>org.springaicommunity</code> module version explicitly given its pre-1.0 status.</p>
+</div>
+</div>
+
+<!-- POC 6 -->
+<div class="poc-card">
+<div class="poc-id">POC 06</div>
+<div class="poc-title">Identity-aware tracing via OTel and Phoenix</div>
+<div class="poc-scope">Scope · Observability — Spans with identity context</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 04 or POC 05 complete. Phoenix instance reachable from the agent service.</div>
+
+<p>Demonstrates that the agent's traces carry identity context — user ID, actor chain, scopes — and that Phoenix queries can answer security questions, not just performance ones.</p>
+
+<div class="prompt-injection">
+<p>Instrument the agent service from POC 04 (or POC 05) with OpenTelemetry, exporting to Phoenix, and attach identity attributes to relevant spans. Requirements:</p>
+<p>1. Add OpenTelemetry auto-instrumentation for HTTP, Spring AI, and outbound HTTP client calls. Export OTLP to [INSERT_PHOENIX_OTLP_ENDPOINT]. Use OpenTelemetry GenAI semantic conventions (<code>gen_ai.*</code>) for LLM-call attributes; supplement with OpenInference helpers where Phoenix-native UI rendering matters.<br>
+2. On the agent entry span (the inbound HTTP request), attach: <code>user.id</code> (current OTel direction; explicitly opt in if the SDK drops <code>enduser.*</code> by default), <code>session.id</code>. Document the decision between <code>user.id</code> and <code>enduser.id</code>.<br>
+3. Wrap the token-exchange call in a custom span with attributes: <code>auth.subject</code>, <code>auth.actor</code>, <code>auth.audience</code>, <code>auth.scopes_requested</code>, <code>auth.scopes_granted</code>.<br>
+4. On each outbound tool/downstream call span, attach: <code>auth.actor_chain</code> (extracted from the OBO token's <code>act</code> claim, flattened to a string like <code>agent-svc &gt; mcp-claims</code>), <code>auth.token_audience</code>.<br>
+5. Ensure span attribute values never include raw JWTs — only claims.<br>
+6. Provide a sample Phoenix query (or a description of one) that retrieves all activity for a specific user identifier in a time window, showing the trace tree.</p>
+<p>Produce: OpenTelemetry configuration, a <code>TracingInterceptor</code> or equivalent for attaching identity attributes, the span-wrapping code around token exchange, and documentation showing what the resulting traces look like in Phoenix (with screenshots or trace dumps). Note any divergence between OpenInference and OTel GenAI attribute names in the resulting traces.</p>
+</div>
+</div>
+
+<!-- POC 7 -->
+<div class="poc-card">
+<div class="poc-id">POC 07</div>
+<div class="poc-title">Step-up authentication for sensitive scopes</div>
+<div class="poc-scope">Scope · Authorization — High-value action gating</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 03 complete. IdP configured to support <code>acr</code> claims and step-up flows.</div>
+
+<p>Demonstrates that sensitive operations remain out of the agent's autonomous reach — even with a valid OBO token, downstream APIs reject calls without a fresh <code>acr</code> claim, forcing a user re-authentication path.</p>
+
+<div class="prompt-injection">
+<p>Extend the downstream service from POC 03 to enforce step-up authentication on a sensitive endpoint. Requirements:</p>
+<p>1. Add a sensitive endpoint <code>POST /transfer</code> that requires both <code>transfer:execute</code> scope and a fresh <code>acr</code> claim (e.g., <code>urn:mace:incommon:iap:silver</code> issued within the last 5 minutes).<br>
+2. Implement a custom <code>JwtClaimValidator</code> or method-security check that rejects tokens without a fresh <code>acr</code>, returning an <code>insufficient_user_authentication</code> error with the required <code>acr_values</code> in the <code>WWW-Authenticate</code> header.<br>
+3. The agent service from POC 04 should attempt the transfer, observe the rejection, and surface a structured error to the frontend indicating a step-up is required.<br>
+4. Document the user-side flow: how the frontend would respond to the step-up requirement (redirecting to the IdP for re-authentication, refreshing the token, and retrying the agent call).<br>
+5. Include integration tests for both paths: rejection without fresh <code>acr</code>, and success with fresh <code>acr</code>.</p>
+<p>Produce: updated downstream service security config, the custom validator, the agent service's error handling for step-up rejections, and the integration tests. Document the IdP-side configuration for issuing <code>acr</code> claims on step-up authentication.</p>
+</div>
+</div>
+
+</section>
+
+</main>
+
+</div>
+
+
+<footer class="site-footer">
+  <div class="container">
+    <div>© <span id="year"></span> my-learnings</div>
+    <div><a href="../">home</a></div>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>

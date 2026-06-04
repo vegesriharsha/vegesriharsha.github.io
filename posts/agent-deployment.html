@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Agents on the OpenShift AI POD — my-learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/doc.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="logo" href="../" style="text-decoration:none">
+      <div class="logo-top">my · learnings</div>
+      <div class="logo-main">notes <span>&</span> viz</div>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../">Home</a>
+      <a href="../#posts" class="active">Notes</a>
+      <a href="../#viz">Visualizations</a>
+      <a href="../about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="doc-layout">
+
+<nav class="sticky">
+  <div class="brand">Agent Deployment</div>
+  <div class="brand-sub">FHLB AIIM · v1</div>
+  <ol>
+    <li><a href="#topology">Cluster topology</a></li>
+    <li><a href="#namespaces">Namespaces &amp; what lives where</a></li>
+    <li><a href="#anatomy">Anatomy of an agent pod</a></li>
+    <li><a href="#java-vs-python">Spring AI vs Python — the honest answer</a></li>
+    <li><a href="#flow">End-to-end: email watcher</a></li>
+    <li><a href="#factory">The agent factory</a></li>
+    <li><a href="#identity">Identity &amp; security</a></li>
+    <li><a href="#day2">Day-2 &amp; SOX evidence</a></li>
+  </ol>
+</nav>
+
+<main>
+  <div class="eyebrow">Architecture Reference · AIIM</div>
+  <h1>Deploying <em>agents</em> on the OpenShift AI POD</h1>
+  <p class="lede">A clear picture of where agents live on the cluster, how requests flow through them, and an honest answer about whether you actually need Python in the stack.</p>
+  <div class="meta">
+    <span>Stack<strong>OpenShift · NIM · Spring AI · Kestra</strong></span>
+    <span>Hardware<strong>2× L40S · 48 GB · 1 TB RAM</strong></span>
+  </div>
+
+  <!-- ===================== SECTION 1 ===================== -->
+  <section id="topology">
+    <div class="section-num">§ 01</div>
+    <h2>The cluster, end-to-end</h2>
+    <p>Everything below sits on the worker node you already have. The diagram is what you'd see if you opened the OpenShift console and clicked through every namespace that matters for agents. Nothing here is theoretical — these are the namespaces and components you'd actually create.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 540" xmlns="http://www.w3.org/2000/svg">
+        <!-- External systems left -->
+        <rect class="svg-bg-external" x="20" y="40" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="85" y="65" text-anchor="middle">Entra ID</text>
+        <text class="svg-label-small" x="85" y="82" text-anchor="middle">Identity Provider</text>
+
+        <rect class="svg-bg-external" x="20" y="120" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="85" y="145" text-anchor="middle">MS Graph</text>
+        <text class="svg-label-small" x="85" y="162" text-anchor="middle">Mail / SharePoint</text>
+
+        <rect class="svg-bg-external" x="20" y="200" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="85" y="225" text-anchor="middle">Customer</text>
+        <text class="svg-label-small" x="85" y="242" text-anchor="middle">Browser · WAF</text>
+
+        <!-- External systems right -->
+        <rect class="svg-bg-external" x="670" y="40" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="735" y="65" text-anchor="middle">SQL Server DW</text>
+        <text class="svg-label-small" x="735" y="82" text-anchor="middle">Downstream</text>
+
+        <rect class="svg-bg-external" x="670" y="120" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="735" y="145" text-anchor="middle">Postgres</text>
+        <text class="svg-label-small" x="735" y="162" text-anchor="middle">pgvector · AGE</text>
+
+        <rect class="svg-bg-external" x="670" y="200" width="130" height="60" rx="3"/>
+        <text class="svg-label-major" x="735" y="225" text-anchor="middle">Harbor</text>
+        <text class="svg-label-small" x="735" y="242" text-anchor="middle">Registry</text>
+
+        <!-- OpenShift cluster -->
+        <rect class="svg-bg-cluster" x="170" y="20" width="480" height="500" rx="6"/>
+        <text class="svg-label-small" x="190" y="42">OPENSHIFT CLUSTER · WORKER NODE · 2× L40S</text>
+
+        <!-- GPU strip -->
+        <rect class="svg-bg-gpu" x="190" y="55" width="200" height="32" rx="3"/>
+        <text class="svg-label" x="290" y="76" text-anchor="middle">L40S #0 · 48 GB</text>
+        <rect class="svg-bg-gpu" x="430" y="55" width="200" height="32" rx="3"/>
+        <text class="svg-label" x="530" y="76" text-anchor="middle">L40S #1 · 48 GB</text>
+
+        <!-- Namespace: fhlb-ai-models -->
+        <rect class="svg-bg-ns" x="190" y="105" width="440" height="80" rx="3"/>
+        <text class="svg-label-small" x="200" y="122">NAMESPACE · fhlb-ai-models</text>
+        <rect class="svg-bg-container" x="200" y="132" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="250" y="153" text-anchor="middle">Nemotron</text>
+        <text class="svg-label-small" x="250" y="167" text-anchor="middle">NIM · LLM</text>
+        <rect class="svg-bg-container" x="310" y="132" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="360" y="153" text-anchor="middle">nv-embedqa</text>
+        <text class="svg-label-small" x="360" y="167" text-anchor="middle">NIM · embed</text>
+        <rect class="svg-bg-container" x="420" y="132" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="470" y="153" text-anchor="middle">nv-rerankqa</text>
+        <text class="svg-label-small" x="470" y="167" text-anchor="middle">NIM · rerank</text>
+        <rect class="svg-bg-container" x="530" y="132" width="90" height="42" rx="2"/>
+        <text class="svg-label" x="575" y="153" text-anchor="middle">NIM Op.</text>
+        <text class="svg-label-small" x="575" y="167" text-anchor="middle">CRDs</text>
+
+        <!-- Namespace: fhlb-ai-gateway -->
+        <rect class="svg-bg-ns" x="190" y="200" width="440" height="50" rx="3"/>
+        <text class="svg-label-small" x="200" y="217">NAMESPACE · fhlb-ai-gateway</text>
+        <rect class="svg-bg-container" x="200" y="222" width="420" height="22" rx="2"/>
+        <text class="svg-label" x="410" y="237" text-anchor="middle">LiteLLM Proxy · rate-limit · PII redact · prompt log · OBO token</text>
+
+        <!-- Namespace: fhlb-agents -->
+        <rect class="svg-bg-ns" x="190" y="265" width="440" height="80" rx="3"/>
+        <text class="svg-label-small" x="200" y="282">NAMESPACE · fhlb-agents</text>
+        <rect class="svg-bg-pod" x="200" y="292" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="250" y="313" text-anchor="middle">chatbot</text>
+        <text class="svg-label-small" x="250" y="327" text-anchor="middle">Spring AI</text>
+        <rect class="svg-bg-pod" x="310" y="292" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="360" y="313" text-anchor="middle">email-intake</text>
+        <text class="svg-label-small" x="360" y="327" text-anchor="middle">Spring AI</text>
+        <rect class="svg-bg-pod" x="420" y="292" width="100" height="42" rx="2"/>
+        <text class="svg-label" x="470" y="313" text-anchor="middle">exam-extract</text>
+        <text class="svg-label-small" x="470" y="327" text-anchor="middle">Spring AI</text>
+        <rect class="svg-bg-pod" x="530" y="292" width="90" height="42" rx="2" stroke-dasharray="3 2"/>
+        <text class="svg-label" x="575" y="313" text-anchor="middle">+sidecar</text>
+        <text class="svg-label-small" x="575" y="327" text-anchor="middle">py · NAT</text>
+
+        <!-- Namespace: fhlb-mcp-tools -->
+        <rect class="svg-bg-ns" x="190" y="360" width="440" height="60" rx="3"/>
+        <text class="svg-label-small" x="200" y="377">NAMESPACE · fhlb-mcp-tools</text>
+        <rect class="svg-bg-container" x="200" y="387" width="100" height="28" rx="2"/>
+        <text class="svg-label" x="250" y="405" text-anchor="middle">graph-mcp</text>
+        <rect class="svg-bg-container" x="310" y="387" width="100" height="28" rx="2"/>
+        <text class="svg-label" x="360" y="405" text-anchor="middle">sharepoint-mcp</text>
+        <rect class="svg-bg-container" x="420" y="387" width="100" height="28" rx="2"/>
+        <text class="svg-label" x="470" y="405" text-anchor="middle">pdf-extract-mcp</text>
+        <rect class="svg-bg-container" x="530" y="387" width="90" height="28" rx="2"/>
+        <text class="svg-label" x="575" y="405" text-anchor="middle">dw-write-mcp</text>
+
+        <!-- Namespace: fhlb-kestra -->
+        <rect class="svg-bg-ns" x="190" y="435" width="440" height="70" rx="3"/>
+        <text class="svg-label-small" x="200" y="452">NAMESPACE · fhlb-kestra</text>
+        <rect class="svg-bg-container" x="200" y="462" width="200" height="36" rx="2"/>
+        <text class="svg-label" x="300" y="478" text-anchor="middle">Kestra Server</text>
+        <text class="svg-label-small" x="300" y="491" text-anchor="middle">flows · triggers · pauses</text>
+        <rect class="svg-bg-container" x="410" y="462" width="210" height="36" rx="2"/>
+        <text class="svg-label" x="515" y="478" text-anchor="middle">Executors</text>
+        <text class="svg-label-small" x="515" y="491" text-anchor="middle">durable · HITL · retries</text>
+
+        <!-- Arrows -->
+        <path class="svg-arrow" d="M150 150 L195 230" marker-end="url(#a1)"/>
+        <path class="svg-arrow" d="M150 230 L195 310" marker-end="url(#a1)"/>
+        <path class="svg-arrow-rust" d="M625 313 L675 230" marker-end="url(#a2)"/>
+        <path class="svg-arrow-rust" d="M625 402 L675 230" marker-end="url(#a2)"/>
+
+        <defs>
+          <marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#f7f8fb"/>
+          </marker>
+          <marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7c5cff"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 01 · Five-namespace topology on the AI POD</div>
+    </div>
+
+    <p>Five namespaces is the whole architecture. Each one has a single, clear responsibility, and the boundaries between them are the policy enforcement points (NetworkPolicies, ServiceAccounts, audit hooks).</p>
+  </section>
+
+  <!-- ===================== SECTION 2 ===================== -->
+  <section id="namespaces">
+    <div class="section-num">§ 02</div>
+    <h2>Namespaces and what lives where</h2>
+    <p>You can think of each namespace as one tenant of the cluster, owned by one team, with one purpose. Here's the contract for each.</p>
+
+    <div class="ns-grid">
+      <div>fhlb-ai-models</div>
+      <div>Pure model serving. NIM containers, NIMService/NIMCache CRDs, the NIM Operator. No business logic. No identity propagation. Just inference. This namespace is the only one with GPU resource requests.</div>
+      <div>fhlb-ai-gateway</div>
+      <div>The single ingress to all model calls. LiteLLM proxy (or F5 AI Gateway). Rate limits per user, per agent. PII redaction on input. Prompt and response logging for SOX evidence. OBO token validation. No agent talks to NIM directly.</div>
+      <div>fhlb-agents</div>
+      <div>One Deployment per agent. Each agent is a Spring Boot pod (with an optional Python sidecar for specific use cases — see §04). This is where business logic, AuthN/Z, and audit hooks live.</div>
+      <div>fhlb-mcp-tools</div>
+      <div>One Deployment per MCP tool server. <code>graph-mcp</code> for Microsoft Graph, <code>sharepoint-mcp</code> for SharePoint, <code>pdf-extract-mcp</code> for unstructured PDF extraction, <code>dw-write-mcp</code> for the downstream warehouse. Tools are reusable across all agents.</div>
+      <div>fhlb-kestra</div>
+      <div>Orchestration and durability. Webhook triggers, scheduled flows, human-in-the-loop pauses, retries, audit trails of every flow execution. Kestra never calls NIM directly; it calls agents.</div>
+    </div>
+
+    <div class="callout teal">
+      <div class="label">Why this carving</div>
+      <p>It maps cleanly to ownership. The AI platform team owns <code>fhlb-ai-models</code> and <code>fhlb-ai-gateway</code>. Each agent's product team owns its Deployment in <code>fhlb-agents</code>. The integration team owns <code>fhlb-mcp-tools</code>. The workflow team owns <code>fhlb-kestra</code>. No one steps on anyone's pods.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 3 ===================== -->
+  <section id="anatomy">
+    <div class="section-num">§ 03</div>
+    <h2>Anatomy of a single agent pod</h2>
+    <p>This is the unit of deployment. Every agent on the AI POD looks like this. The variation is only in the prompts (ConfigMap), the tools it's allowed to call (NetworkPolicy), and whether it carries an optional reasoning sidecar.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 440" xmlns="http://www.w3.org/2000/svg">
+        <!-- Pod boundary -->
+        <rect class="svg-bg-pod" x="100" y="40" width="540" height="280" rx="4"/>
+        <text class="svg-label-small" x="120" y="62">POD · email-intake-agent-7d8f9-x2k4l</text>
+
+        <!-- Main container: Spring Boot -->
+        <rect class="svg-bg-container" x="130" y="80" width="300" height="220" rx="3"/>
+        <text class="svg-label-major" x="280" y="108" text-anchor="middle">spring-boot-agent</text>
+        <text class="svg-label-small" x="280" y="124" text-anchor="middle">CONTAINER · always present</text>
+        <line x1="150" y1="138" x2="410" y2="138" stroke="#2a3042" stroke-width="1"/>
+        <text class="svg-label" x="150" y="158">• Spring AI ChatClient</text>
+        <text class="svg-label" x="150" y="178">• OAuth2 resource server (Entra)</text>
+        <text class="svg-label" x="150" y="198">• MCP client (per-tool)</text>
+        <text class="svg-label" x="150" y="218">• Audit log producer (Kafka/DB)</text>
+        <text class="svg-label" x="150" y="238">• Business rules &amp; validation</text>
+        <text class="svg-label" x="150" y="258">• REST endpoints (Kestra calls)</text>
+        <text class="svg-label" x="150" y="278">• Actuator · health · metrics</text>
+
+        <!-- Optional sidecar: Python -->
+        <rect class="svg-bg-container" x="450" y="80" width="170" height="220" rx="3" stroke-dasharray="4 3"/>
+        <text class="svg-label-major" x="535" y="108" text-anchor="middle">py-reasoning</text>
+        <text class="svg-label-small" x="535" y="124" text-anchor="middle">SIDECAR · optional</text>
+        <line x1="470" y1="138" x2="600" y2="138" stroke="#2a3042" stroke-width="1"/>
+        <text class="svg-label" x="470" y="158">• NAT / LangGraph</text>
+        <text class="svg-label" x="470" y="178">• Multi-step ReAct</text>
+        <text class="svg-label" x="470" y="198">• Graph reasoning</text>
+        <text class="svg-label" x="470" y="218">• Exposed on localhost</text>
+        <text class="svg-label" x="470" y="238">• Talks to AI Gateway</text>
+        <text class="svg-label-small" x="535" y="270" text-anchor="middle">use only when</text>
+        <text class="svg-label-small" x="535" y="282" text-anchor="middle">Spring AI alone</text>
+        <text class="svg-label-small" x="535" y="294" text-anchor="middle">is insufficient</text>
+
+        <!-- Pod attachments -->
+        <rect class="svg-bg-external" x="680" y="60" width="130" height="40" rx="3"/>
+        <text class="svg-label" x="745" y="78" text-anchor="middle">ServiceAccount</text>
+        <text class="svg-label-small" x="745" y="92" text-anchor="middle">email-intake-sa</text>
+
+        <rect class="svg-bg-external" x="680" y="115" width="130" height="40" rx="3"/>
+        <text class="svg-label" x="745" y="133" text-anchor="middle">ConfigMap</text>
+        <text class="svg-label-small" x="745" y="147" text-anchor="middle">prompts · models</text>
+
+        <rect class="svg-bg-external" x="680" y="170" width="130" height="40" rx="3"/>
+        <text class="svg-label" x="745" y="188" text-anchor="middle">Projected SA Token</text>
+        <text class="svg-label-small" x="745" y="202" text-anchor="middle">audience-bound</text>
+
+        <rect class="svg-bg-external" x="680" y="225" width="130" height="40" rx="3"/>
+        <text class="svg-label" x="745" y="243" text-anchor="middle">NetworkPolicy</text>
+        <text class="svg-label-small" x="745" y="257" text-anchor="middle">egress allowlist</text>
+
+        <rect class="svg-bg-external" x="680" y="280" width="130" height="40" rx="3"/>
+        <text class="svg-label" x="745" y="298" text-anchor="middle">SCC</text>
+        <text class="svg-label-small" x="745" y="312" text-anchor="middle">restricted-v2</text>
+
+        <!-- Service in front -->
+        <rect class="svg-bg-external" x="10" y="170" width="80" height="40" rx="3"/>
+        <text class="svg-label" x="50" y="188" text-anchor="middle">Service</text>
+        <text class="svg-label-small" x="50" y="202" text-anchor="middle">ClusterIP</text>
+        <path class="svg-arrow" d="M90 190 L128 190" marker-end="url(#a3)"/>
+
+        <!-- Egress arrows -->
+        <text class="svg-label-small" x="240" y="345" text-anchor="middle">→ to fhlb-ai-gateway</text>
+        <text class="svg-label-small" x="240" y="358" text-anchor="middle">→ to fhlb-mcp-tools (allow-listed)</text>
+        <text class="svg-label-small" x="500" y="345" text-anchor="middle">→ to fhlb-ai-gateway only</text>
+        <text class="svg-label-small" x="500" y="358" text-anchor="middle">  (NetworkPolicy denies the rest)</text>
+
+        <!-- Caption area -->
+        <text class="svg-label-small" x="100" y="400">EVERY AGENT POD FOLLOWS THIS SHAPE. ONLY THE CONFIGMAP, NETWORKPOLICY, AND SIDECAR PRESENCE VARY.</text>
+
+        <defs>
+          <marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#f7f8fb"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 02 · Single agent pod with optional reasoning sidecar</div>
+    </div>
+
+    <h3>What the Deployment actually looks like</h3>
+    <p>Stripped to essentials. This is your Helm template's rendered output, with the sidecar enabled for illustration. Without the sidecar, just delete the second container.</p>
+
+    <pre data-lang="yaml"><span class="k">apiVersion:</span> <span class="s">apps/v1</span>
+<span class="k">kind:</span> <span class="s">Deployment</span>
+<span class="k">metadata:</span>
+  <span class="k">name:</span> <span class="s">email-intake-agent</span>
+  <span class="k">namespace:</span> <span class="s">fhlb-agents</span>
+<span class="k">spec:</span>
+  <span class="k">replicas:</span> <span class="n">2</span>
+  <span class="k">template:</span>
+    <span class="k">spec:</span>
+      <span class="k">serviceAccountName:</span> <span class="s">email-intake-sa</span>
+      <span class="k">containers:</span>
+      <span class="p">-</span> <span class="k">name:</span> <span class="s">spring-boot-agent</span>
+        <span class="k">image:</span> <span class="s">harbor.fhlb.internal/agents/email-intake:1.4.0</span>
+        <span class="k">ports:</span>
+        <span class="p">-</span> <span class="k">containerPort:</span> <span class="n">8080</span>
+        <span class="k">env:</span>
+        <span class="p">-</span> <span class="k">name:</span> <span class="s">SPRING_AI_OPENAI_BASE_URL</span>
+          <span class="k">value:</span> <span class="s">http://litellm.fhlb-ai-gateway.svc.cluster.local:4000</span>
+        <span class="p">-</span> <span class="k">name:</span> <span class="s">REASONING_SIDECAR_URL</span>
+          <span class="k">value:</span> <span class="s">http://localhost:9000</span>      <span class="c"># sidecar on loopback</span>
+        <span class="k">volumeMounts:</span>
+        <span class="p">-</span> <span class="k">name:</span> <span class="s">prompts</span>
+          <span class="k">mountPath:</span> <span class="s">/config/prompts</span>
+          <span class="k">readOnly:</span> <span class="s">true</span>
+      <span class="p">-</span> <span class="k">name:</span> <span class="s">py-reasoning</span>             <span class="c"># OPTIONAL — drop if Spring AI suffices</span>
+        <span class="k">image:</span> <span class="s">harbor.fhlb.internal/agents/email-intake-reasoning:1.4.0</span>
+        <span class="k">ports:</span>
+        <span class="p">-</span> <span class="k">containerPort:</span> <span class="n">9000</span>
+        <span class="k">env:</span>
+        <span class="p">-</span> <span class="k">name:</span> <span class="s">OPENAI_BASE_URL</span>
+          <span class="k">value:</span> <span class="s">http://litellm.fhlb-ai-gateway.svc.cluster.local:4000</span>
+      <span class="k">volumes:</span>
+      <span class="p">-</span> <span class="k">name:</span> <span class="s">prompts</span>
+        <span class="k">configMap:</span> { <span class="k">name:</span> <span class="s">email-intake-prompts</span> }</pre>
+
+    <p>Two things to notice. First, the Spring Boot container talks to the gateway by service DNS — it does not know NIM exists. Second, the Python sidecar (if present) is on <code>localhost</code> — it is unreachable from outside the pod. That gives you a clean security boundary: only the Spring Boot container is exposed; only it carries identity; the sidecar is a private reasoning library.</p>
+  </section>
+
+  <!-- ===================== SECTION 4 ===================== -->
+  <section id="java-vs-python">
+    <div class="section-num">§ 04</div>
+    <h2>Spring AI vs Python — the honest answer</h2>
+    <p>You're a Java/Spring shop. The default should be Spring AI, full stop. Most of what you've described as "agentic" is not a reasoning loop — it's a deterministic workflow with LLM nodes. That belongs in Kestra calling Spring AI, not in a Python reasoning engine.</p>
+
+    <p>Here's how I'd draw the line:</p>
+
+    <div class="decision">
+      <div class="head">Spring AI alone is sufficient (~85% of your use cases)</div>
+      <div class="head teal">Python sidecar earns its place (~15%)</div>
+      <div>
+        <ul>
+          <li>Classify intent → call 1–3 tools → respond</li>
+          <li>RAG: retrieve → rerank → generate</li>
+          <li>Structured extraction from a document into a known schema</li>
+          <li>Tool-using workflows where Kestra owns the DAG and Spring AI handles each LLM node</li>
+          <li>Chatbot front-end with grounded retrieval</li>
+          <li>Anything where step count is bounded and known in advance</li>
+        </ul>
+      </div>
+      <div>
+        <ul>
+          <li>True multi-step ReAct loops where the LLM decides how many iterations</li>
+          <li>Graph reasoning where the LLM branches and reflects (LangGraph)</li>
+          <li>NVIDIA NAT-specific features: profiling, eval harnesses, NIM-deep optimizations</li>
+          <li>Specialized ML libraries with no Java equivalent (e.g., <code>unstructured.io</code> for ugly PDFs, certain doc layout models)</li>
+          <li>Data-science prototyping that needs to ship without a rewrite</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout rust">
+      <div class="label">Direct claim</div>
+      <p>For your email → PDF → downstream pattern, you don't need Python. That's a Kestra flow with Spring AI nodes. Each step is bounded. The "reasoning" is just: extract these fields, validate against this schema, decide which branch to take. Spring AI's <code>ChatClient.call(...).entity(MyRecord.class)</code> does this natively, with type safety, no sidecar required.</p>
+    </div>
+
+    <h3>The mental test</h3>
+    <p>Before adding a Python sidecar to any agent, answer one question: <em>can I draw the full execution graph on a whiteboard in advance?</em> If yes — every branch, every tool, every decision point — then it's a workflow, and Kestra + Spring AI is the right tool. If no — if the LLM genuinely decides at runtime how many steps to take and which to take — then Python with NAT or LangGraph is justified.</p>
+
+    <p>From the use cases in your memory, the only ones that fail this test are exploratory things: a "research the regulatory landscape" agent, a "look across multiple data sources and synthesize" agent. Those are real and they may eventually exist. But for examination tracking, email intake, PDF extraction, downstream pushes — the graph is drawable. Stay in Java.</p>
+
+    <h3>What about NAT specifically</h3>
+    <p>NAT is worth a single pilot, scoped to one use case where you want NVIDIA-aligned evaluation tooling and profiling. Don't standardize on it. NVIDIA's agent frameworks are young and they pivot. Spring AI plus a thin Python sidecar where needed lets you swap NAT for LangGraph (or vice versa) without rewriting your control plane.</p>
+  </section>
+
+  <!-- ===================== SECTION 5 ===================== -->
+  <section id="flow">
+    <div class="section-num">§ 05</div>
+    <h2>End-to-end trace: email intake</h2>
+    <p>The pattern you described — watch emails, download PDFs, extract data, push to downstream — drawn step by step. Every arrow crosses a namespace boundary, which means every arrow is a policy enforcement point.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 580" xmlns="http://www.w3.org/2000/svg">
+        <!-- Swim lanes -->
+        <line x1="120" y1="50" x2="120" y2="560" stroke="#2a3042" stroke-width="1" stroke-dasharray="2 3"/>
+        <line x1="270" y1="50" x2="270" y2="560" stroke="#2a3042" stroke-width="1" stroke-dasharray="2 3"/>
+        <line x1="430" y1="50" x2="430" y2="560" stroke="#2a3042" stroke-width="1" stroke-dasharray="2 3"/>
+        <line x1="580" y1="50" x2="580" y2="560" stroke="#2a3042" stroke-width="1" stroke-dasharray="2 3"/>
+        <line x1="730" y1="50" x2="730" y2="560" stroke="#2a3042" stroke-width="1" stroke-dasharray="2 3"/>
+
+        <!-- Lane labels -->
+        <text class="svg-label-small" x="65" y="40" text-anchor="middle">MS GRAPH</text>
+        <text class="svg-label-small" x="195" y="40" text-anchor="middle">KESTRA</text>
+        <text class="svg-label-small" x="350" y="40" text-anchor="middle">SPRING AGENT</text>
+        <text class="svg-label-small" x="505" y="40" text-anchor="middle">AI GATEWAY → NIM</text>
+        <text class="svg-label-small" x="655" y="40" text-anchor="middle">MCP TOOLS</text>
+        <text class="svg-label-small" x="780" y="40" text-anchor="middle">DOWNSTREAM</text>
+
+        <!-- Step 1 -->
+        <circle cx="65" cy="80" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="65" y="84" text-anchor="middle" fill="#f7f8fb">1</text>
+        <path class="svg-arrow-rust" d="M82 80 L185 80" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="135" y="73" text-anchor="middle">webhook: new email</text>
+
+        <!-- Step 2 -->
+        <circle cx="195" cy="120" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="195" y="124" text-anchor="middle" fill="#f7f8fb">2</text>
+        <path class="svg-arrow-rust" d="M212 120 L335 120" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="275" y="113" text-anchor="middle">POST /classify</text>
+
+        <!-- Step 3 -->
+        <circle cx="350" cy="160" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="350" y="164" text-anchor="middle" fill="#f7f8fb">3</text>
+        <path class="svg-arrow-rust" d="M367 160 L490 160" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="430" y="153" text-anchor="middle">classify w/ Nemotron</text>
+
+        <!-- Step 4 (back) -->
+        <path class="svg-arrow-dashed" d="M490 185 L367 185" marker-end="url(#a6)"/>
+        <text class="svg-label-mono" x="430" y="178" text-anchor="middle">{ category: exam-request }</text>
+
+        <!-- Step 5 -->
+        <circle cx="350" cy="220" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="350" y="224" text-anchor="middle" fill="#f7f8fb">4</text>
+        <path class="svg-arrow-rust" d="M367 220 L640 220" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="500" y="213" text-anchor="middle">graph-mcp: download attachment</text>
+
+        <!-- Step 6 (back) -->
+        <path class="svg-arrow-dashed" d="M640 245 L367 245" marker-end="url(#a6)"/>
+        <text class="svg-label-mono" x="500" y="238" text-anchor="middle">PDF bytes</text>
+
+        <!-- Step 7 -->
+        <circle cx="350" cy="280" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="350" y="284" text-anchor="middle" fill="#f7f8fb">5</text>
+        <path class="svg-arrow-rust" d="M367 280 L640 280" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="500" y="273" text-anchor="middle">pdf-extract-mcp: parse layout</text>
+
+        <!-- Step 8 -->
+        <circle cx="350" cy="320" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="350" y="324" text-anchor="middle" fill="#f7f8fb">6</text>
+        <path class="svg-arrow-rust" d="M367 320 L490 320" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="430" y="313" text-anchor="middle">extract to schema</text>
+        <path class="svg-arrow-dashed" d="M490 345 L367 345" marker-end="url(#a6)"/>
+        <text class="svg-label-mono" x="430" y="338" text-anchor="middle">ExaminationRecord</text>
+
+        <!-- Step 9 (back to Kestra) -->
+        <path class="svg-arrow-dashed" d="M335 380 L212 380" marker-end="url(#a6)"/>
+        <text class="svg-label-mono" x="275" y="373" text-anchor="middle">200 OK + record</text>
+
+        <!-- Step 10 - pause -->
+        <circle cx="195" cy="415" r="14" fill="#fbbf24"/>
+        <text class="svg-label" x="195" y="419" text-anchor="middle" fill="#f7f8fb">7</text>
+        <text class="svg-label-mono" x="195" y="445" text-anchor="middle">PAUSE</text>
+        <text class="svg-label-mono" x="195" y="458" text-anchor="middle">human approval</text>
+
+        <!-- Step 11 - resume -->
+        <circle cx="195" cy="490" r="14" fill="#5fe0cc"/>
+        <text class="svg-label" x="195" y="494" text-anchor="middle" fill="#f7f8fb">8</text>
+        <path class="svg-arrow-rust" d="M212 490 L335 490" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="275" y="483" text-anchor="middle">POST /push (resumed)</text>
+
+        <!-- Step 12 -->
+        <circle cx="350" cy="525" r="14" fill="#7c5cff"/>
+        <text class="svg-label" x="350" y="529" text-anchor="middle" fill="#f7f8fb">9</text>
+        <path class="svg-arrow-rust" d="M367 525 L640 525" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="500" y="518" text-anchor="middle">dw-write-mcp: insert record</text>
+        <path class="svg-arrow-rust" d="M675 525 L770 525" marker-end="url(#a5)"/>
+        <text class="svg-label-mono" x="720" y="518" text-anchor="middle">SQL INSERT</text>
+
+        <defs>
+          <marker id="a5" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7c5cff"/>
+          </marker>
+          <marker id="a6" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#8b94ab"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 03 · Email-intake flow across five namespaces</div>
+    </div>
+
+    <p>Notice what Kestra does and doesn't do. It does: orchestrate, pause for approval, retry on failure, hold state, generate audit. It does not: call the LLM, hold business rules, validate. Notice what the agent does and doesn't do. It does: identity, validation, tool dispatch, audit emission. It does not: hold workflow state across calls.</p>
+
+    <p>The flow is composed of nine numbered steps and roughly seven REST/gRPC hops. There's no reasoning loop. There's no agent autonomously deciding "I think I should try this tool next." Every step is explicit in the Kestra YAML. That is exactly why Python is unnecessary here.</p>
+
+    <h3>The Kestra flow, abbreviated</h3>
+    <pre data-lang="yaml"><span class="k">id:</span> <span class="s">email-intake-examination</span>
+<span class="k">namespace:</span> <span class="s">fhlb.intake</span>
+<span class="k">triggers:</span>
+  <span class="p">-</span> <span class="k">id:</span> <span class="s">graph-webhook</span>
+    <span class="k">type:</span> <span class="s">io.kestra.plugin.core.trigger.Webhook</span>
+
+<span class="k">tasks:</span>
+  <span class="p">-</span> <span class="k">id:</span> <span class="s">classify</span>
+    <span class="k">type:</span> <span class="s">io.kestra.plugin.core.http.Request</span>
+    <span class="k">url:</span> <span class="s">http://email-intake-agent.fhlb-agents:8080/classify</span>
+    <span class="k">method:</span> <span class="s">POST</span>
+    <span class="k">body:</span> <span class="s">"{{ trigger.body }}"</span>
+
+  <span class="p">-</span> <span class="k">id:</span> <span class="s">extract</span>
+    <span class="k">type:</span> <span class="s">io.kestra.plugin.core.http.Request</span>
+    <span class="k">url:</span> <span class="s">http://email-intake-agent.fhlb-agents:8080/extract</span>
+    <span class="k">method:</span> <span class="s">POST</span>
+    <span class="k">body:</span> <span class="s">"{{ outputs.classify.body }}"</span>
+
+  <span class="p">-</span> <span class="k">id:</span> <span class="s">human-approval</span>      <span class="c"># Kestra pauses the flow here</span>
+    <span class="k">type:</span> <span class="s">io.kestra.plugin.core.flow.Pause</span>
+    <span class="k">onResume:</span>
+      <span class="k">approved:</span>
+        <span class="k">type:</span> <span class="s">BOOLEAN</span>
+
+  <span class="p">-</span> <span class="k">id:</span> <span class="s">push-downstream</span>
+    <span class="k">type:</span> <span class="s">io.kestra.plugin.core.http.Request</span>
+    <span class="k">runIf:</span> <span class="s">"{{ outputs['human-approval'].onResume.approved }}"</span>
+    <span class="k">url:</span> <span class="s">http://email-intake-agent.fhlb-agents:8080/push</span>
+    <span class="k">method:</span> <span class="s">POST</span>
+    <span class="k">body:</span> <span class="s">"{{ outputs.extract.body }}"</span></pre>
+  </section>
+
+  <!-- ===================== SECTION 6 ===================== -->
+  <section id="factory">
+    <div class="section-num">§ 06</div>
+    <h2>The agent factory — shipping without a monolith</h2>
+    <p>The way you ship the 11th agent in a week instead of a quarter is to template the boring parts and only write the interesting parts. Every agent has the same shape; only the prompts, tools, and validation rules differ.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 280" xmlns="http://www.w3.org/2000/svg">
+        <!-- Cookiecutter -->
+        <rect class="svg-bg-external" x="20" y="100" width="120" height="60" rx="3"/>
+        <text class="svg-label-major" x="80" y="125" text-anchor="middle">Template</text>
+        <text class="svg-label-small" x="80" y="142" text-anchor="middle">cookiecutter</text>
+        <text class="svg-label-small" x="80" y="155" text-anchor="middle">5 variables</text>
+
+        <path class="svg-arrow" d="M145 130 L180 130" marker-end="url(#a7)"/>
+
+        <!-- GitLab repo -->
+        <rect class="svg-bg-container" x="185" y="80" width="140" height="100" rx="3"/>
+        <text class="svg-label-major" x="255" y="105" text-anchor="middle">GitLab repo</text>
+        <text class="svg-label-small" x="255" y="122" text-anchor="middle">fhlb-agents/{name}</text>
+        <line x1="200" y1="132" x2="310" y2="132" stroke="#2a3042"/>
+        <text class="svg-label-mono" x="200" y="148">• Spring Boot src</text>
+        <text class="svg-label-mono" x="200" y="161">• Helm chart</text>
+        <text class="svg-label-mono" x="200" y="174">• Kestra flow YAML</text>
+
+        <path class="svg-arrow" d="M330 130 L365 130" marker-end="url(#a7)"/>
+
+        <!-- CI -->
+        <rect class="svg-bg-container" x="370" y="100" width="120" height="60" rx="3"/>
+        <text class="svg-label-major" x="430" y="125" text-anchor="middle">CI pipeline</text>
+        <text class="svg-label-small" x="430" y="142" text-anchor="middle">build · test · scan</text>
+        <text class="svg-label-small" x="430" y="155" text-anchor="middle">SBOM · sign</text>
+
+        <path class="svg-arrow" d="M495 130 L530 130" marker-end="url(#a7)"/>
+
+        <!-- Harbor -->
+        <rect class="svg-bg-external" x="535" y="100" width="100" height="60" rx="3"/>
+        <text class="svg-label-major" x="585" y="125" text-anchor="middle">Harbor</text>
+        <text class="svg-label-small" x="585" y="142" text-anchor="middle">private registry</text>
+        <text class="svg-label-small" x="585" y="155" text-anchor="middle">signed images</text>
+
+        <path class="svg-arrow" d="M640 130 L675 130" marker-end="url(#a7)"/>
+
+        <!-- GitOps -->
+        <rect class="svg-bg-pod" x="680" y="100" width="120" height="60" rx="3"/>
+        <text class="svg-label-major" x="740" y="125" text-anchor="middle">ArgoCD</text>
+        <text class="svg-label-small" x="740" y="142" text-anchor="middle">GitOps sync</text>
+        <text class="svg-label-small" x="740" y="155" text-anchor="middle">→ OpenShift</text>
+
+        <!-- Registry -->
+        <rect class="svg-bg-external" x="280" y="220" width="260" height="50" rx="3"/>
+        <text class="svg-label-major" x="410" y="245" text-anchor="middle">Agent Registry (Postgres)</text>
+        <text class="svg-label-small" x="410" y="260" text-anchor="middle">name · owner · tools · data classes · SOX status</text>
+
+        <path class="svg-arrow-dashed" d="M255 185 L355 218" marker-end="url(#a8)"/>
+        <path class="svg-arrow-dashed" d="M740 165 L500 218" marker-end="url(#a8)"/>
+
+        <text class="svg-label-small" x="80" y="50">DAY 0</text>
+        <text class="svg-label-small" x="740" y="50">DAY 1</text>
+
+        <defs>
+          <marker id="a7" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#f7f8fb"/>
+          </marker>
+          <marker id="a8" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#8b94ab"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 04 · The agent factory · template → repo → CI → Harbor → GitOps</div>
+    </div>
+
+    <p>The five variables a new agent fills in:</p>
+    <ol>
+      <li><strong>Agent name</strong> — drives Deployment, Service, ConfigMap, ServiceAccount names.</li>
+      <li><strong>MCP tools</strong> — list of tool servers it's allowed to call. Drives NetworkPolicy egress allowlist.</li>
+      <li><strong>Models</strong> — primary LLM, embedding, reranker. Read from the NIM catalog.</li>
+      <li><strong>Reasoning mode</strong> — <code>spring-only</code> or <code>spring+sidecar</code>. Drives whether the second container is rendered.</li>
+      <li><strong>Data classes</strong> — what data the agent touches (PII, member data, internal). Drives DLP rules at the AI Gateway and registers SOX scope.</li>
+    </ol>
+
+    <div class="callout">
+      <div class="label">The registry as SOX evidence</div>
+      <p>A Postgres-backed agent registry, populated by CI on every deploy, is the single artifact that answers "what agents exist, what do they touch, who owns them, when did they last change." That's most of what an auditor wants to see, and you get it as a free side effect of the factory pattern.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 7 ===================== -->
+  <section id="identity">
+    <div class="section-num">§ 07</div>
+    <h2>Identity propagation — the part everyone gets wrong</h2>
+    <p>The hardest part of agent security isn't the LLM. It's making sure the downstream system sees the real user, not a service account "acting on behalf of." If the agent uses its own credentials to write to the warehouse, you've collapsed your audit trail.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 220" xmlns="http://www.w3.org/2000/svg">
+        <!-- User -->
+        <rect class="svg-bg-external" x="20" y="80" width="100" height="60" rx="3"/>
+        <text class="svg-label-major" x="70" y="105" text-anchor="middle">User</text>
+        <text class="svg-label-small" x="70" y="122" text-anchor="middle">Entra ID</text>
+        <text class="svg-label-small" x="70" y="135" text-anchor="middle">JWT (id token)</text>
+
+        <path class="svg-arrow-rust" d="M125 110 L165 110" marker-end="url(#a9)"/>
+
+        <!-- Spring agent -->
+        <rect class="svg-bg-pod" x="170" y="80" width="120" height="60" rx="3"/>
+        <text class="svg-label-major" x="230" y="105" text-anchor="middle">Spring Agent</text>
+        <text class="svg-label-small" x="230" y="122" text-anchor="middle">validates JWT</text>
+        <text class="svg-label-small" x="230" y="135" text-anchor="middle">extracts user</text>
+
+        <path class="svg-arrow-rust" d="M295 110 L335 110" marker-end="url(#a9)"/>
+
+        <!-- AI Gateway -->
+        <rect class="svg-bg-container" x="340" y="80" width="120" height="60" rx="3"/>
+        <text class="svg-label-major" x="400" y="105" text-anchor="middle">AI Gateway</text>
+        <text class="svg-label-small" x="400" y="122" text-anchor="middle">rate-limit by user</text>
+        <text class="svg-label-small" x="400" y="135" text-anchor="middle">log prompt+user</text>
+
+        <path class="svg-arrow-rust" d="M465 110 L505 110" marker-end="url(#a9)"/>
+
+        <!-- NIM -->
+        <rect class="svg-bg-container" x="510" y="80" width="80" height="60" rx="3"/>
+        <text class="svg-label-major" x="550" y="115" text-anchor="middle">NIM</text>
+        <text class="svg-label-small" x="550" y="130" text-anchor="middle">no identity</text>
+
+        <!-- MCP tool path -->
+        <path class="svg-arrow-rust" d="M230 145 L230 185 L640 185 L640 145" marker-end="url(#a9)"/>
+        <text class="svg-label-mono" x="430" y="178" text-anchor="middle">OBO token exchange → MCP tool → downstream as user</text>
+
+        <!-- MCP tool -->
+        <rect class="svg-bg-container" x="620" y="80" width="100" height="60" rx="3"/>
+        <text class="svg-label-major" x="670" y="105" text-anchor="middle">MCP tool</text>
+        <text class="svg-label-small" x="670" y="122" text-anchor="middle">exchanges OBO</text>
+        <text class="svg-label-small" x="670" y="135" text-anchor="middle">for downstream</text>
+
+        <!-- downstream -->
+        <rect class="svg-bg-external" x="730" y="80" width="80" height="60" rx="3"/>
+        <text class="svg-label-major" x="770" y="105" text-anchor="middle">SQL DW</text>
+        <text class="svg-label-small" x="770" y="122" text-anchor="middle">sees real user</text>
+        <text class="svg-label-small" x="770" y="135" text-anchor="middle">in audit log</text>
+
+        <path class="svg-arrow-rust" d="M725 110 L730 110" marker-end="url(#a9)"/>
+
+        <text class="svg-label-small" x="20" y="40">TOKEN FLOWS LEFT TO RIGHT. AT EVERY HOP, IDENTITY IS PRESERVED, NOT IMPERSONATED.</text>
+
+        <defs>
+          <marker id="a9" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7c5cff"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 05 · Identity propagation · OAuth2 on-behalf-of all the way to the downstream</div>
+    </div>
+
+    <p>Three security layers stack on top of identity propagation:</p>
+    <ul>
+      <li><strong>NetworkPolicy</strong> per agent — egress allowlist to specific MCP tool services. The chatbot can't reach <code>dw-write-mcp</code> even if compromised.</li>
+      <li><strong>AI Gateway</strong> — single choke point. Per-user rate limits. PII redaction. Prompt logging. The only path to NIM.</li>
+      <li><strong>OpenShift SCC</strong> — restricted-v2 baseline. Non-root. Read-only root FS. No privilege escalation.</li>
+    </ul>
+
+    <p>And one rule above all: <strong>service accounts never act on behalf of users.</strong> If the downstream system sees a service account in its audit log, the agent is wrong.</p>
+  </section>
+
+  <!-- ===================== SECTION 8 ===================== -->
+  <section id="day2">
+    <div class="section-num">§ 08</div>
+    <h2>Day-2 — observability, evidence, drift</h2>
+    <p>The architecture isn't done when it deploys. It's done when an auditor can answer "what did agent X do for user Y on date Z" in under a minute.</p>
+
+    <h3>The three signal sources</h3>
+    <ul>
+      <li><strong>AI Gateway logs</strong> — every prompt, response, user, agent, model, token count, timestamp. This is your LLM audit trail. Stream to Splunk/Elastic.</li>
+      <li><strong>Agent audit log</strong> — every tool invocation with user, agent, tool, redacted inputs, redacted outputs, success/failure. Stream to the same sink, correlate by request-id.</li>
+      <li><strong>Kestra execution log</strong> — every flow run, state transition, pause, resume, retry, approval. Already built in.</li>
+    </ul>
+
+    <p>Correlate all three by a single request-id that's minted at the entry point (Kestra trigger or chatbot API call) and propagated as a header through every hop. That's your end-to-end trace.</p>
+
+    <div class="callout teal">
+      <div class="label">What good looks like</div>
+      <p>An auditor asks: "On 2026-03-15, what did the email-intake agent extract from the message attached to ticket EX-4421, and who approved the downstream push?" Answer in one query joining three logs by request-id. No code dive. No re-running anything. That's the goal state, and the architecture above gets you there as a side effect, not as an add-on.</p>
+    </div>
+
+    <h3>What I'd build first</h3>
+    <ol>
+      <li><strong>One namespace at a time.</strong> Stand up <code>fhlb-ai-gateway</code> with LiteLLM in front of your existing NIMs. Make every existing app go through it. This alone gives you a logging and rate-limit choke point.</li>
+      <li><strong>One MCP tool, one agent.</strong> Build <code>graph-mcp</code> (read mail). Build the email-intake agent in Spring AI. Wire up a single Kestra flow. Ship the simplest possible end-to-end before generalizing.</li>
+      <li><strong>The template, only after #2 works.</strong> Don't template prematurely. Build the second agent by hand. Extract the template from the diff between the first two.</li>
+      <li><strong>NAT pilot in parallel, scoped tight.</strong> Pick one exploratory use case where Spring AI clearly doesn't fit. Run NAT in a sidecar. Decide in a quarter whether it's worth keeping.</li>
+    </ol>
+  </section>
+
+  <footer>
+    AGENT DEPLOYMENT REFERENCE · AIIM · INTERNAL · v1 · MAY 2026
+  </footer>
+
+</main>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div>© <span id="year"></span> my-learnings</div>
+    <div><a href="../">home</a></div>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>

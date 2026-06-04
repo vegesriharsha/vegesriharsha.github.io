@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Architecture in Agentic Systems — my-learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/doc.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="logo" href="../" style="text-decoration:none">
+      <div class="logo-top">my · learnings</div>
+      <div class="logo-main">notes <span>&</span> viz</div>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../">Home</a>
+      <a href="../#posts" class="active">Notes</a>
+      <a href="../#viz">Visualizations</a>
+      <a href="../about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="doc-layout">
+
+<aside class="toc">
+<span class="toc-label">Contents</span>
+<ol>
+  <li><a href="#context">Context and Foundations</a></li>
+  <li><a href="#coala">The Cognitive Memory Model</a></li>
+  <li><a href="#four-types">The Four Memory Types</a></li>
+  <li><a href="#working">Working Memory</a></li>
+  <li><a href="#episodic">Episodic Memory</a></li>
+  <li><a href="#semantic">Semantic Memory</a></li>
+  <li><a href="#procedural">Procedural Memory</a></li>
+  <li><a href="#lifecycle">Memory Operations and Lifecycle</a></li>
+  <li><a href="#outside-chatclient">Driving Memory Outside ChatClient</a></li>
+  <li><a href="#scoping">Scoping, Tenancy, and Identity</a></li>
+  <li><a href="#retrieval">Retrieval Strategy and Hybrid Search</a></li>
+  <li><a href="#consolidation">Memory Consolidation</a></li>
+  <li><a href="#governance">Governance, Audit, and Forgetting</a></li>
+  <li><a href="#failure">Failure Modes</a></li>
+  <li><a href="#patterns">Patterns to Establish</a></li>
+  <li><a href="#poc">POC Injection Points</a></li>
+</ol>
+</aside>
+
+<main>
+
+<header class="doc-header">
+<div class="doc-eyebrow">Architecture Learning Document</div>
+<h1>Memory Architecture in <em>Agentic Systems</em></h1>
+<p class="lede">A working architect's notes on building production memory for AI agents — working, episodic, semantic, and procedural — across Spring AI agents, batch jobs, and the broader enterprise platform.</p>
+<dl class="doc-meta">
+  <div>
+    <dt>Audience</dt>
+    <dd>Platform, AI, and Data engineering teams</dd>
+  </div>
+  <div>
+    <dt>Scope</dt>
+    <dd>Conceptual foundations + implementation guidance</dd>
+  </div>
+  <div>
+    <dt>Status</dt>
+    <dd>Living document — patterns evolving</dd>
+  </div>
+</dl>
+</header>
+
+<div class="callout">
+<span class="callout-label">Framework versions assumed</span>
+<p>Patterns and code in this document are anchored to: <strong>Spring Boot 3.4+ / 4.0</strong>, <strong>Spring AI 1.1.x (stable)</strong>. Memory artifact IDs follow the post-1.0 RC1 naming convention (<code>spring-ai-model-chat-memory-repository-*</code>). <strong>PromptChatMemoryAdvisor</strong> is deprecated since 1.1.3 — <code>MessageChatMemoryAdvisor</code> is the recommended path. <strong>PGVector</strong> is assumed as the default vector store given existing PostgreSQL footprint. <strong>NIM</strong> models are reached via the LiteLLM proxy; embedding model is provider-agnostic at the Spring AI layer.</p>
+</div>
+
+<!-- ============ SECTION 1 ============ -->
+<section id="context">
+<span class="section-number">§ 01</span>
+<h2>Context and Foundations</h2>
+
+<p>An LLM is stateless. Every call is a fresh universe: the model has no recollection of the previous turn, no awareness of which user asked, no memory of what worked last time. State that feels continuous to the user is an illusion the application maintains by re-presenting context on every call. Memory architecture is the discipline of deciding <em>what</em> to re-present, <em>when</em>, and <em>from where</em>.</p>
+
+<p>For deterministic services, this discipline has a familiar name — session management, caching, knowledge bases — and the patterns are well understood. Agents force the conversation into harder territory: the LLM both reads from and writes to memory, the &ldquo;right&rdquo; thing to remember is not knowable in advance, and an agent that runs autonomously over hours or days needs memory that genuinely persists across sessions, processes, and even infrastructure failures.</p>
+
+<p>The patterns established to solve memory for agents are not narrowly applicable to AI workloads. They are modern data patterns — typed event streams for episodic recall, vector search for semantic retrieval, versioned configuration for procedural rules, governance hooks for retention and auditability — that any stateful service benefits from. The AI use case forces the architectural conversation; the architecture benefits every workload that follows.</p>
+
+<div class="principle">
+<p>Memory is not a feature of an agent. It is the substrate the agent runs on. Choose its shape deliberately, or live with whatever shape emerges by accident.</p>
+</div>
+
+<p>This document captures the architectural reasoning, the Spring AI primitives available for each memory type, the patterns for driving memory programmatically outside the <code>ChatClient</code> (essential for batch jobs and scheduled workflows), and the governance hooks SOX-regulated environments require. As with identity, the same reasoning applies to whichever agent comes next.</p>
+</section>
+
+<!-- ============ SECTION 2 ============ -->
+<section id="coala">
+<span class="section-number">§ 02</span>
+<h2>The Cognitive Memory Model</h2>
+
+<p>The vocabulary worth standardizing on comes from <strong>CoALA</strong> (Cognitive Architectures for Language Agents, Sumers et al., 2023), which translated Tulving's 1972 distinction between episodic and semantic memory — and Squire's 1987 addition of procedural memory — into a clean model for LLM-driven systems. Major frameworks (LangChain, LangGraph, Letta, Mem0, IBM, MongoDB) all use a version of this taxonomy in their documentation. The team should too.</p>
+
+<p>CoALA describes an agent with a <strong>short-term working memory</strong> plus three optional <strong>long-term memories</strong>: episodic (experiences), semantic (knowledge), and procedural (skills). Each has different storage characteristics, different read/write patterns, different governance needs, and different roles in the decision cycle. Treating them as one — the most common architectural mistake — produces an agent that retrieves the wrong thing at the wrong time and audits nothing reliably.</p>
+
+<div class="callout">
+<span class="callout-label">Why this taxonomy matters</span>
+<p>The taxonomy is not academic. It maps directly to <strong>which storage backend is correct for what</strong>. Conversation turns belong in a chat-memory repository keyed by conversation ID, not a vector store. Domain knowledge belongs in a vector store with metadata filters, not in chat history. Business rules belong in version-controlled prompt files and a curated tool catalog, not embedded as facts in either. Confusing these collapses governance, retrieval quality, and cost.</p>
+</div>
+
+<p>The remainder of this document treats the four memory types individually before showing how they compose in a single agent — and crucially, how each can be driven programmatically without a <code>ChatClient</code> in the loop.</p>
+</section>
+
+<!-- ============ SECTION 3 ============ -->
+<section id="four-types">
+<span class="section-number">§ 03</span>
+<h2>The Four Memory Types</h2>
+
+<p>Every agent participates in four memory planes simultaneously. The mental model to hold: <em>what does the model see</em> on this call, <em>what did it see</em> on the last call, <em>what does it know</em> about the world, and <em>how does it act</em>.</p>
+
+<div class="planes">
+  <div class="plane">
+    <div class="plane-num">PLANE 01</div>
+    <div class="plane-title">Working Memory</div>
+    <div class="plane-desc">The current context window. Everything the LLM literally sees on this call. Built fresh each turn from the other three. Bounded by token budget; not persisted.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PLANE 02</div>
+    <div class="plane-title">Episodic Memory</div>
+    <div class="plane-desc">Conversation turns and event logs — what happened. Keyed by conversation/session ID. Spring AI: <code>ChatMemory</code> + <code>ChatMemoryRepository</code>.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PLANE 03</div>
+    <div class="plane-title">Semantic Memory</div>
+    <div class="plane-desc">Domain knowledge and consolidated facts — what is known. Embedded and retrieved by similarity. Spring AI: <code>VectorStore</code> + <code>EmbeddingModel</code>.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PLANE 04</div>
+    <div class="plane-title">Procedural Memory</div>
+    <div class="plane-desc">Skills and rules — how to act. System prompts + tool catalog. Spring AI: <code>@Tool</code> methods, system prompt files, tool callbacks.</div>
+  </div>
+</div>
+
+<div class="diagram">
+<div class="diagram-title">Memory Composition at Inference Time</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Episodic</span>
+      <div class="flow-desc">Load recent conversation turns for this session (e.g., last 20 messages from <code>chat_memory</code> table keyed by conversation ID).</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Semantic</span>
+      <div class="flow-desc">Embed the user's input. Run similarity search against the vector store with metadata filters for tenant/user/agent scope. Pull top-K relevant chunks.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Procedural</span>
+      <div class="flow-desc">Load the agent's system prompt (versioned in Git). Resolve tool callbacks from the registry. Optionally filter tools by tenant policy.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Working</span>
+      <div class="flow-desc">Compose into a single <code>Prompt</code>: system message (procedural) + semantic context block + episodic message history + current user message. Send to the model.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <span class="flow-actor">Write-back</span>
+      <div class="flow-desc">After the response: append user + assistant turn to episodic store. Optionally trigger consolidation (extract facts → semantic store) and procedural learning (record tool success/failure).</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<p>Working memory is ephemeral and free; the other three are persistent and have storage, governance, and lifecycle implications. Most of this document is about those three.</p>
+</section>
+
+<!-- ============ SECTION 4 ============ -->
+<section id="working">
+<span class="section-number">§ 04</span>
+<h2>Working Memory</h2>
+
+<p>Working memory is the model's context window for a single inference call. It is composed fresh from the long-term stores, exists only for the duration of one round trip, and is bounded by the model's token budget. The architectural decisions about working memory are really decisions about the <em>composition strategy</em>: in what order, with what budgets, and via which truncation policy do the long-term stores assemble themselves into a prompt?</p>
+
+<h3>Composition order matters</h3>
+
+<p>The conventional order — and the one Spring AI's advisor chain enforces by default — is:</p>
+
+<ol>
+  <li><strong>System message</strong> (procedural) — agent role, rules, tool-use policy</li>
+  <li><strong>Retrieved context block</strong> (semantic) — relevant knowledge for this query, prefaced with a clear separator</li>
+  <li><strong>Conversation history</strong> (episodic) — last N message pairs</li>
+  <li><strong>Current user message</strong> — the turn's input</li>
+</ol>
+
+<p>This ordering matters because of how attention works in practice: tokens near the start (system prompt) and near the end (current question) receive the most reliable attention. Recent guidance — &ldquo;lost in the middle&rdquo; research — suggests keeping the most critical context out of the middle of long prompts.</p>
+
+<h3>Token budgeting</h3>
+
+<p>Each plane should have a declared budget, not a soft preference:</p>
+
+<table>
+  <thead>
+    <tr><th>Plane</th><th>Typical budget</th><th>Truncation policy</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>System prompt</td><td>500 – 1,500 tokens</td><td>None — fixed content</td></tr>
+    <tr><td>Semantic retrieval</td><td>2,000 – 4,000 tokens</td><td>Top-K with similarity threshold; trim chunks</td></tr>
+    <tr><td>Episodic history</td><td>2,000 – 6,000 tokens</td><td>Sliding window: keep last N messages</td></tr>
+    <tr><td>Current turn + headroom for response</td><td>Remainder</td><td>Reserve ≥ <code>max_tokens</code> for generation</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+<span class="callout-label">The silent failure mode</span>
+<p>The model never tells you when context was truncated. A long conversation with a tight window quietly drops the oldest turns from <code>MessageWindowChatMemory</code>'s sliding window — the user references something from earlier and the agent acts confused. Either size the window deliberately for expected turn length, or use a summarization strategy (consolidate older turns into a single summary message) for genuinely long sessions.</p>
+</div>
+
+<p>Spring AI's <code>MessageWindowChatMemory</code> handles the sliding window for the episodic plane. For the semantic plane, the <code>SearchRequest</code> parameters (<code>topK</code>, <code>similarityThreshold</code>) shape the budget. Procedural is sized once at deployment. The composition itself is what advisors do.</p>
+</section>
+
+<!-- ============ SECTION 5 ============ -->
+<section id="episodic">
+<span class="section-number">§ 05</span>
+<h2>Episodic Memory</h2>
+
+<p>Episodic memory is the agent's experience log — the verbatim sequence of turns that happened, optionally enriched with tool calls and structured outcomes. It answers questions of the form &ldquo;what did the user say earlier&rdquo; and &ldquo;what did I tell them last time.&rdquo; In Spring AI it is the responsibility of two collaborating abstractions: <code>ChatMemory</code> (the strategy — what to keep, when to evict) and <code>ChatMemoryRepository</code> (the storage backend).</p>
+
+<h3>The core abstractions</h3>
+
+<p><strong><code>ChatMemoryRepository</code></strong> has four methods that constitute the storage contract:</p>
+
+<pre data-lang="Java"><code>public interface ChatMemoryRepository {
+    List&lt;String&gt; findConversationIds();
+    List&lt;Message&gt; findByConversationId(String conversationId);
+    void saveAll(String conversationId, List&lt;Message&gt; messages);
+    void deleteByConversationId(String conversationId);
+}</code></pre>
+
+<p>Implementations shipped with Spring AI 1.1.x: <code>InMemoryChatMemoryRepository</code>, <code>JdbcChatMemoryRepository</code>, <code>CassandraChatMemoryRepository</code>, <code>Neo4jChatMemoryRepository</code>, <code>MongoChatMemoryRepository</code>, <code>CosmosDBChatMemoryRepository</code>, plus a Redis implementation via <code>spring-ai-model-chat-memory-repository-redis</code>. The standardized artifact pattern is <code>spring-ai-model-chat-memory-repository-&lt;backend&gt;</code>.</p>
+
+<p><strong><code>ChatMemory</code></strong> sits above the repository and decides which messages survive eviction. The shipping strategy is <code>MessageWindowChatMemory</code> (sliding window of N messages). The architecture allows custom strategies — token-budgeted, time-based, importance-scored — but the windowed strategy covers most agent use cases.</p>
+
+<h3>Recommended production configuration</h3>
+
+<p>For our environment — existing PostgreSQL footprint, SOX retention requirements, microservice-per-agent topology — JDBC over PostgreSQL is the default. Cassandra is the alternative when the agent has very high message throughput and natural time-series query patterns (Cassandra's TTL feature is particularly clean for fixed-retention regimes).</p>
+
+<pre data-lang="Java"><code>@Configuration
+public class EpisodicMemoryConfig {
+
+    @Bean
+    public ChatMemoryRepository chatMemoryRepository(JdbcTemplate jdbcTemplate) {
+        return JdbcChatMemoryRepository.builder()
+            .jdbcTemplate(jdbcTemplate)
+            .dialect(new PostgresChatMemoryRepositoryDialect())
+            .build();
+    }
+
+    @Bean
+    public ChatMemory episodicMemory(ChatMemoryRepository repository) {
+        return MessageWindowChatMemory.builder()
+            .chatMemoryRepository(repository)
+            .maxMessages(20)
+            .build();
+    }
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">Schema</span>
+<p>Spring AI ships SQL schema scripts at <code>classpath:org/springframework/ai/chat/memory/repository/jdbc/schema-postgresql.sql</code>. Use Flyway or Liquibase to apply it — do not rely on auto-creation in production. The schema is intentionally minimal: <code>(conversation_id, message_type, content, timestamp)</code> indexed on <code>conversation_id</code>.</p>
+</div>
+
+<h3>Conversation ID is the join key</h3>
+
+<p>Every episodic operation is keyed by a <code>conversationId</code>. This is where multi-tenancy and identity meet memory. A few standing rules:</p>
+
+<ul>
+  <li><strong>Never use a raw user ID</strong> as the conversation ID — one user has many conversations. Use a UUID per logical session.</li>
+  <li><strong>Pair the conversation ID with a user ID in metadata</strong> if your repository supports it (or in a separate <code>conversation_metadata</code> table) so queries like &ldquo;all sessions for user U&rdquo; remain possible.</li>
+  <li><strong>For agent-to-agent workflows</strong>, the conversation ID identifies the workflow instance, not the originating user. Identity travels separately, via the <code>ToolContext</code> pattern from the identity document.</li>
+</ul>
+
+<p>When using the <code>ChatClient</code> API, the conversation ID is passed as an advisor parameter:</p>
+
+<pre data-lang="Java"><code>String reply = chatClient.prompt()
+    .user(message)
+    .advisors(spec -&gt; spec.param(ChatMemory.CONVERSATION_ID, conversationId))
+    .call()
+    .content();</code></pre>
+
+<p>When driving the memory directly (outside the <code>ChatClient</code>, see §09), the same key is passed to <code>ChatMemory.get(conversationId)</code> and <code>ChatMemory.add(conversationId, messages)</code>.</p>
+</section>
+
+<!-- ============ SECTION 6 ============ -->
+<section id="semantic">
+<span class="section-number">§ 06</span>
+<h2>Semantic Memory</h2>
+
+<p>Semantic memory is the agent's <em>world knowledge</em> — facts, definitions, policies, prior consolidated insights — stored in a form that supports retrieval by meaning rather than by exact key. In Spring AI this is the <code>VectorStore</code> abstraction, backed by an <code>EmbeddingModel</code> that turns text into vectors.</p>
+
+<h3>The core abstractions</h3>
+
+<p>A <code>VectorStore</code> implements three operations: <code>add(List&lt;Document&gt;)</code>, <code>delete(List&lt;String&gt; ids)</code>, and <code>similaritySearch(SearchRequest)</code>. Documents carry text plus arbitrary metadata; the metadata is what enables filtered retrieval (per-tenant, per-user, per-document-type).</p>
+
+<pre data-lang="Java"><code>@Configuration
+public class SemanticMemoryConfig {
+
+    @Bean
+    public VectorStore semanticStore(JdbcTemplate jdbcTemplate,
+                                     EmbeddingModel embeddingModel) {
+        return PgVectorStore.builder(jdbcTemplate, embeddingModel)
+            .dimensions(1024)                                  // matches NIM embedding model
+            .distanceType(PgVectorStore.PgDistanceType.COSINE_DISTANCE)
+            .indexType(PgVectorStore.PgIndexType.HNSW)
+            .initializeSchema(false)                           // managed via Flyway
+            .schemaName("ai")
+            .vectorTableName("semantic_memory")
+            .build();
+    }
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">Why PGVector for our environment</span>
+<p>The PostgreSQL footprint is already operational. Adding pgvector is a single extension, not a new datastore class to monitor, back up, and patch. Hybrid search (vector + lexical via tsvector) is native. The same database hosts the application's relational state, removing one cross-store consistency problem. Performance is sufficient up to ~10M vectors per index with HNSW; beyond that, dedicated vector databases earn their cost.</p>
+</div>
+
+<h3>Document model and metadata discipline</h3>
+
+<p>Every document stored should carry, at minimum, four metadata fields. This discipline is the difference between a vector store that supports governance and one that doesn't.</p>
+
+<table>
+  <thead>
+    <tr><th>Metadata field</th><th>Purpose</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>tenant_id</code></td><td>Multi-tenancy isolation</td><td><code>fhlb-des-moines</code></td></tr>
+    <tr><td><code>scope</code></td><td>Visibility class</td><td><code>shared</code> | <code>user:&lt;id&gt;</code> | <code>agent:&lt;id&gt;</code></td></tr>
+    <tr><td><code>source</code></td><td>Provenance for audit</td><td><code>policy-doc-v3.2</code></td></tr>
+    <tr><td><code>created_at</code></td><td>Temporal filtering, retention</td><td>ISO-8601 timestamp</td></tr>
+  </tbody>
+</table>
+
+<pre data-lang="Java"><code>Document doc = Document.builder()
+    .text(chunkText)
+    .metadata(Map.of(
+        "tenant_id", tenantId,
+        "scope", "shared",
+        "source", sourceDocumentId,
+        "created_at", Instant.now().toString(),
+        "doc_type", "policy"
+    ))
+    .build();
+vectorStore.add(List.of(doc));</code></pre>
+
+<h3>Retrieval with filters</h3>
+
+<p>Every similarity search should specify a filter expression. Unfiltered retrieval against a shared vector store is a multi-tenancy bug waiting to surface.</p>
+
+<pre data-lang="Java"><code>SearchRequest req = SearchRequest.builder()
+    .query(userQuestion)
+    .topK(5)
+    .similarityThreshold(0.7)
+    .filterExpression("tenant_id == 'fhlb-des-moines' && " +
+                      "(scope == 'shared' || scope == 'user:" + userId + "')")
+    .build();
+
+List&lt;Document&gt; context = vectorStore.similaritySearch(req);</code></pre>
+
+<div class="callout warn">
+<span class="callout-label">The filter is mandatory, not advisory</span>
+<p>A request without a <code>filterExpression</code> will happily return documents from other tenants, other users, and other agents. The default should be a service-layer wrapper that injects tenant and user filters automatically — direct <code>VectorStore</code> access without the wrapper should be allowed only for indexing operations, not for retrieval in user-facing paths.</p>
+</div>
+
+<h3>Embedding model coupling</h3>
+
+<p>Vectors are model-specific. A document embedded with <code>nv-embedqa-e5-v5</code> cannot be meaningfully retrieved against a query embedded with <code>text-embedding-3-small</code>. This has two architectural implications:</p>
+
+<ul>
+  <li><strong>The vector store is bound to one embedding model at a time.</strong> Changing models requires re-embedding everything. Treat the embedding model choice as a long-term commitment.</li>
+  <li><strong>Embedding dimensions must match the table schema.</strong> Plan the dimension at table creation; changing it requires a new table. Record the model identifier in metadata so future audits can confirm consistency.</li>
+</ul>
+</section>
+
+<!-- ============ SECTION 7 ============ -->
+<section id="procedural">
+<span class="section-number">§ 07</span>
+<h2>Procedural Memory</h2>
+
+<p>Procedural memory is <em>how the agent acts</em> — its operational policies and its callable skills. CoALA explicitly distinguishes this from semantic memory: semantic stores what is known, procedural stores how to behave. The distinction matters because the failure modes differ. A stale semantic fact produces a wrong answer. A stale procedural rule produces a wrong action — a more expensive class of mistake.</p>
+
+<p>In Spring AI, procedural memory has two surfaces:</p>
+
+<ul>
+  <li><strong>The system prompt</strong> — the agent's standing instructions, role, and policy boundaries. Loaded before every inference.</li>
+  <li><strong>The tool catalog</strong> — <code>@Tool</code>-annotated methods (or programmatic <code>FunctionToolCallback</code> registrations) that the LLM can invoke. The set of available tools is itself part of the agent's behavior policy.</li>
+</ul>
+
+<h3>System prompts as versioned configuration</h3>
+
+<p>The system prompt is the most consequential single artifact in the agent. Treat it like code, not like a string literal. Store it in Git, version it, review changes through the same PR process as application code, and load it as a resource at startup.</p>
+
+<pre data-lang="Java"><code>@Configuration
+public class ProceduralMemoryConfig {
+
+    @Bean
+    public PromptTemplate agentSystemPrompt(
+            @Value("classpath:prompts/claims-agent-v3.st") Resource resource)
+            throws IOException {
+        String template = resource.getContentAsString(StandardCharsets.UTF_8);
+        return PromptTemplate.builder().template(template).build();
+    }
+}</code></pre>
+
+<p>The <code>.st</code> file is a plain text template under version control. The filename's version suffix (<code>-v3</code>) is the deliberately blunt way to track which version produced which behavior — a non-obvious requirement at audit time.</p>
+
+<h3>Tools as procedural skills</h3>
+
+<p>Each tool is a discrete capability the agent can deploy. The set of available tools shapes the agent's action space — adding or removing a tool changes the agent's behavior more than most system-prompt tweaks. Therefore: <strong>the tool registry is part of procedural memory</strong>, and changes to it deserve the same governance as system-prompt changes.</p>
+
+<pre data-lang="Java"><code>@Component
+public class AccountTools {
+
+    private final OAuth2AuthorizedClientManager authorizedClientManager;
+    private final WebClient accountsApi;
+
+    @Tool(description = "Get the current balance for one of the member's accounts. " +
+                       "Use only when the user explicitly asks about a specific account.")
+    public AccountBalance getBalance(
+            @ToolParam(description = "Account identifier") String accountId,
+            ToolContext ctx) {
+
+        Authentication principal = (Authentication) ctx.getContext().get("authentication");
+        // OBO exchange + downstream call (see Identity Management document, §07)
+        OAuth2AuthorizedClient authorized = authorizedClientManager.authorize(
+            OAuth2AuthorizeRequest
+                .withClientRegistrationId("obo-accounts")
+                .principal(principal)
+                .build());
+
+        return accountsApi.get()
+            .uri("/accounts/{id}/balance", accountId)
+            .header(HttpHeaders.AUTHORIZATION,
+                    "Bearer " + authorized.getAccessToken().getTokenValue())
+            .retrieve()
+            .bodyToMono(AccountBalance.class)
+            .block();
+    }
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">Tool description is part of procedural memory</span>
+<p>The <code>description</code> string on <code>@Tool</code> is what the LLM uses to decide whether to invoke the tool. It is not documentation for humans; it is operational behavior. Changes to a tool description are behavior changes — treat them with the same scrutiny as code changes. Tests should pin the description string so a casual edit doesn't silently shift the agent's tool-selection patterns.</p>
+</div>
+
+<h3>Tool catalog governance</h3>
+
+<p>At 50–250 agents, the tool catalog is no longer something each agent manages locally. Tools become a platform asset: registered centrally, discovered via Backstage, governed for who can call what, and audited per invocation. The pattern is:</p>
+
+<ul>
+  <li><strong>In-process tools</strong> (<code>@Tool</code> methods) for tightly coupled capabilities specific to one agent.</li>
+  <li><strong>Remote MCP-hosted tools</strong> (per the identity document, §08) for capabilities shared across multiple agents, where governance, separate deployment cadence, and centralized auditability matter.</li>
+</ul>
+
+<p>A capability that ends up needed by three or more agents should migrate from in-process to MCP. The hop cost is real but worth it for centralization.</p>
+</section>
+
+<!-- ============ SECTION 8 ============ -->
+<section id="lifecycle">
+<span class="section-number">§ 08</span>
+<h2>Memory Operations and Lifecycle</h2>
+
+<p>Each memory type has the same five operations, but with different mechanics, costs, and failure modes for each. Knowing which operation to optimize for is the difference between a memory system that scales and one that does not.</p>
+
+<table>
+  <thead>
+    <tr><th>Operation</th><th>Working</th><th>Episodic</th><th>Semantic</th><th>Procedural</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Read</strong></td>
+      <td>n/a (constructed)</td>
+      <td>Latest N by conv. ID</td>
+      <td>Vector similarity + filter</td>
+      <td>File load at startup</td>
+    </tr>
+    <tr>
+      <td><strong>Write</strong></td>
+      <td>n/a (transient)</td>
+      <td>Append on each turn</td>
+      <td>Indexed write (ingestion)</td>
+      <td>PR + redeploy</td>
+    </tr>
+    <tr>
+      <td><strong>Update</strong></td>
+      <td>n/a</td>
+      <td>Rare; usually append-only</td>
+      <td>Re-embed and re-index</td>
+      <td>New version of prompt/tool</td>
+    </tr>
+    <tr>
+      <td><strong>Forget</strong></td>
+      <td>n/a</td>
+      <td>TTL or explicit delete</td>
+      <td>Delete by ID; tombstone</td>
+      <td>Remove from registry</td>
+    </tr>
+    <tr>
+      <td><strong>Consolidate</strong></td>
+      <td>n/a</td>
+      <td>Summarize older turns</td>
+      <td>Extract from episodic</td>
+      <td>Promote learnings to rules</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The async-write principle</h3>
+
+<p>Episodic writes happen on the user's critical path — they extend the latency of every agent turn. Semantic writes (ingestion) and consolidation (episodic → semantic) should never happen on that path. The pattern:</p>
+
+<ul>
+  <li>Episodic append is synchronous, single insert, indexed on conversation ID — fast enough to absorb into the turn.</li>
+  <li>Semantic ingestion runs in a background workflow (Kestra) — chunk → embed → metadata enrich → batch insert.</li>
+  <li>Consolidation runs on a schedule (nightly for most agents, hourly for high-throughput ones) over a closed conversation window.</li>
+</ul>
+
+<h3>Forgetting is a first-class operation</h3>
+
+<p>Memory grows without bound unless explicitly trimmed. In a regulated environment, &ldquo;just keep everything&rdquo; is also wrong — retention policies cap how long certain data can live. The defaults:</p>
+
+<ul>
+  <li><strong>Episodic:</strong> TTL at the row level (Cassandra's native TTL; for JDBC, a scheduled <code>DELETE WHERE timestamp &lt; now() - INTERVAL '90 days'</code>). Default 90 days, override per agent class.</li>
+  <li><strong>Semantic:</strong> Soft-delete with tombstone metadata, hard-delete on a separate schedule. Re-indexing should respect tombstones.</li>
+  <li><strong>Procedural:</strong> Old prompt versions and deprecated tools should be archived, not silently removed — audit trails reference them.</li>
+</ul>
+
+<div class="principle">
+<p>An agent without a forgetting strategy has no retention policy. An agent without a retention policy has no compliance posture. Decide this at design time, not when legal asks.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 9 ============ -->
+<section id="outside-chatclient">
+<span class="section-number">§ 09</span>
+<h2>Driving Memory Outside the ChatClient</h2>
+
+<p>The <code>ChatClient</code> API is convenient for HTTP-driven, user-facing chat. It is the wrong shape for half of what production agents actually do: scheduled batch jobs, event-driven processors, multi-step workflows orchestrated by Kestra, and any service-layer code that needs precise control over the prompt, the tool execution loop, or the memory write semantics. For these cases, drive the memory primitives directly.</p>
+
+<h3>The three layers below ChatClient</h3>
+
+<p>From bottom up: <code>ChatModel</code> (one call to the LLM), <code>ToolCallingManager</code> (executes tool calls the model requested), and the memory primitives <code>ChatMemory</code> and <code>VectorStore</code>. <code>ChatClient</code> is sugar around these. The sugar is removable.</p>
+
+<pre data-lang="Java"><code>@Service
+public class BatchAgentService {
+
+    private final ChatModel chatModel;
+    private final ChatMemory episodicMemory;
+    private final VectorStore semanticStore;
+    private final ToolCallingManager toolCallingManager;
+    private final List&lt;ToolCallback&gt; toolCallbacks;
+    private final PromptTemplate systemPromptTemplate;
+
+    public String runTurn(String conversationId, String userInput, String tenantId) {
+
+        // 1. Procedural — load system prompt
+        Message systemMessage = systemPromptTemplate.createMessage();
+
+        // 2. Semantic — retrieve relevant context
+        SearchRequest req = SearchRequest.builder()
+            .query(userInput)
+            .topK(5)
+            .similarityThreshold(0.7)
+            .filterExpression("tenant_id == '" + tenantId + "'")
+            .build();
+        String contextBlock = semanticStore.similaritySearch(req).stream()
+            .map(Document::getText)
+            .collect(Collectors.joining("\n---\n"));
+
+        // 3. Episodic — load history
+        List&lt;Message&gt; history = episodicMemory.get(conversationId);
+
+        // 4. Working — compose
+        List&lt;Message&gt; messages = new ArrayList&lt;&gt;();
+        messages.add(systemMessage);
+        if (!contextBlock.isBlank()) {
+            messages.add(new SystemMessage("Relevant context:\n" + contextBlock));
+        }
+        messages.addAll(history);
+        UserMessage current = new UserMessage(userInput);
+        messages.add(current);
+
+        // 5. Configure with tools, externally-managed execution
+        ChatOptions options = ToolCallingChatOptions.builder()
+            .toolCallbacks(toolCallbacks)
+            .internalToolExecutionEnabled(false)
+            .build();
+
+        Prompt prompt = new Prompt(messages, options);
+
+        // 6. Agent loop with explicit tool execution
+        ChatResponse response = chatModel.call(prompt);
+        while (response.hasToolCalls()) {
+            ToolExecutionResult result =
+                toolCallingManager.executeToolCalls(prompt, response);
+            prompt = new Prompt(result.conversationHistory(), options);
+            response = chatModel.call(prompt);
+        }
+
+        String reply = response.getResult().getOutput().getText();
+
+        // 7. Episodic — write back
+        episodicMemory.add(conversationId, List.of(current, new AssistantMessage(reply)));
+
+        return reply;
+    }
+}</code></pre>
+
+<p>This is the same agent loop the <code>ChatClient</code> runs internally, expressed directly. Every step is observable, debuggable, and customizable. In return for the verbosity, you get: explicit control over the system message, the ability to inject custom context blocks, full visibility into the tool-execution loop, and the option to short-circuit, batch, or retry tool calls based on application logic.</p>
+
+<h3>When to drop down to this level</h3>
+
+<ul>
+  <li><strong>Kestra-orchestrated workflows.</strong> Each step is a discrete agent turn, possibly in a different process, with deterministic resumability requirements.</li>
+  <li><strong>Scheduled batch jobs.</strong> &ldquo;Run agent X over the closed claims from yesterday and update the case notes.&rdquo; No HTTP request; no live user.</li>
+  <li><strong>Event-driven processors.</strong> Agent reacts to a pgmq message or a Kafka event. Memory keyed by entity ID, not conversation ID.</li>
+  <li><strong>Custom approval flows.</strong> Pause before tool execution, gate it on a human approval, then resume.</li>
+  <li><strong>Multi-model routing.</strong> Pick a different <code>ChatModel</code> based on tenant or task complexity. <code>ChatClient</code> wraps one model; the loop above can switch.</li>
+</ul>
+
+<div class="callout warn">
+<span class="callout-label">Set <code>internalToolExecutionEnabled=false</code> deliberately</span>
+<p>By default, <code>ChatModel</code> implementations execute tool calls transparently and loop until done. Setting <code>internalToolExecutionEnabled(false)</code> on <code>ToolCallingChatOptions</code> hands the loop to you. This is required for any approval gating, custom retry logic, or persistence of intermediate tool results. It is also where most bugs creep in — forgetting to loop, mishandling <code>ToolExecutionResult</code>, or losing the conversation history between iterations. Test the loop carefully.</p>
+</div>
+
+<h3>Memory primitives are usable standalone</h3>
+
+<p>The episodic and semantic primitives don't need a model at all. They can be used as plain data services from any code in the application:</p>
+
+<pre data-lang="Java"><code>// Episodic — pure storage operations
+List&lt;Message&gt; history = episodicMemory.get(sessionId);
+episodicMemory.add(sessionId, List.of(new UserMessage("Hello")));
+episodicMemory.clear(sessionId);
+
+// Semantic — ingestion without an agent
+List&lt;Document&gt; chunks = new TokenTextSplitter().apply(
+    new TikaDocumentReader(resource).get());
+chunks.forEach(d -&gt; d.getMetadata().put("tenant_id", tenantId));
+semanticStore.add(chunks);
+
+// Semantic — retrieval as a service for any consumer (not just LLMs)
+List&lt;Document&gt; matches = semanticStore.similaritySearch(req);</code></pre>
+
+<p>This matters: semantic memory is also a useful enterprise search asset, and episodic memory is also a conversation history endpoint for support UIs. The fact that an LLM consumes them does not mean only an LLM can.</p>
+</section>
+
+<!-- ============ SECTION 10 ============ -->
+<section id="scoping">
+<span class="section-number">§ 10</span>
+<h2>Scoping, Tenancy, and Identity</h2>
+
+<p>Memory without scoping is a data leak. Three orthogonal scope dimensions need to be resolved for every memory operation: <em>tenant</em>, <em>principal</em>, and <em>agent</em>.</p>
+
+<table>
+  <thead>
+    <tr><th>Dimension</th><th>What it isolates</th><th>Episodic</th><th>Semantic</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Tenant</td>
+      <td>Bank / business unit</td>
+      <td>Separate conversation namespace or DB schema</td>
+      <td><code>tenant_id</code> metadata filter (mandatory)</td>
+    </tr>
+    <tr>
+      <td>Principal</td>
+      <td>End user or service</td>
+      <td>Conversation ID is per-session per-user</td>
+      <td><code>scope = user:&lt;id&gt;</code> for private; <code>shared</code> for org-wide</td>
+    </tr>
+    <tr>
+      <td>Agent</td>
+      <td>Which agent &ldquo;owns&rdquo; the memory</td>
+      <td>Separate conversation IDs per agent</td>
+      <td><code>scope = agent:&lt;id&gt;</code> for agent-specific knowledge</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Default visibility hierarchy</h3>
+
+<p>For any retrieval, the agent should see, in priority order:</p>
+
+<ol>
+  <li><strong>User-private memory</strong> — facts and preferences the user has shared with this agent (or with this user across all agents).</li>
+  <li><strong>Agent-shared memory</strong> — knowledge specific to this agent's role (e.g., claims agent's procedural knowledge).</li>
+  <li><strong>Organization-shared memory</strong> — bank-wide policies, terminology, public knowledge.</li>
+</ol>
+
+<p>The filter expression encodes this as a boolean composition:</p>
+
+<pre data-lang="Java"><code>String filter = String.format(
+    "tenant_id == '%s' && " +
+    "(scope == 'shared' || " +
+    " scope == 'user:%s' || " +
+    " scope == 'agent:%s')",
+    tenantId, userId, agentId);
+
+SearchRequest req = SearchRequest.builder()
+    .query(question)
+    .topK(8)
+    .similarityThreshold(0.7)
+    .filterExpression(filter)
+    .build();</code></pre>
+
+<h3>Identity propagation</h3>
+
+<p>The identity flowing through the application (see Identity Management document, §07) is the same identity that scopes memory. The <code>ToolContext</code> pattern for tools applies equally to memory operations:</p>
+
+<pre data-lang="Java"><code>@Service
+public class TenantScopedMemoryService {
+
+    private final VectorStore vectorStore;
+
+    public List&lt;Document&gt; retrieve(String query, Authentication auth) {
+        Jwt jwt = (Jwt) auth.getPrincipal();
+        String tenantId = jwt.getClaimAsString("tenant_id");
+        String userId   = jwt.getSubject();
+        if (tenantId == null) {
+            throw new AccessDeniedException("Token missing tenant claim");
+        }
+
+        SearchRequest req = SearchRequest.builder()
+            .query(query)
+            .topK(5)
+            .similarityThreshold(0.7)
+            .filterExpression(scopedFilter(tenantId, userId))
+            .build();
+
+        return vectorStore.similaritySearch(req);
+    }
+
+    private String scopedFilter(String tenantId, String userId) {
+        return "tenant_id == '" + tenantId + "' && " +
+               "(scope == 'shared' || scope == 'user:" + userId + "')";
+    }
+}</code></pre>
+
+<div class="callout warn">
+<span class="callout-label">Filter injection is the new SQL injection</span>
+<p>The filter expression is parsed and applied as a query. String-concatenating untrusted input into it has the same class of risks as string-concatenating SQL. Either validate tenant/user IDs against a strict pattern before composition (<code>[a-zA-Z0-9\-]+</code> only), or use the framework's structured filter builder when available. Never accept a raw filter expression from outside the trust boundary.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 11 ============ -->
+<section id="retrieval">
+<span class="section-number">§ 11</span>
+<h2>Retrieval Strategy and Hybrid Search</h2>
+
+<p>Pure vector similarity is the simplest retrieval strategy and the most common reason agents return confidently irrelevant context. Production retrieval combines multiple signals.</p>
+
+<h3>The recency / relevance / salience triple</h3>
+
+<p>The Generative Agents paper (Park et al., 2023) introduced a useful retrieval scoring composition for episodic memory that has since become a community baseline:</p>
+
+<ul>
+  <li><strong>Relevance</strong> — vector similarity between the query and the candidate memory.</li>
+  <li><strong>Recency</strong> — exponential decay on the candidate's age.</li>
+  <li><strong>Salience</strong> — how &ldquo;important&rdquo; the memory was when stored (scored at write time, often by the LLM).</li>
+</ul>
+
+<p>The final score is a weighted sum; the weights are tuned per use case. This composition is not native to Spring AI but is straightforward to implement on top of <code>VectorStore.similaritySearch</code> by attaching <code>created_at</code> and <code>salience</code> metadata, retrieving a wider candidate set, and re-ranking in application code.</p>
+
+<h3>Hybrid search — vector + lexical</h3>
+
+<p>Vector search returns documents that are <em>semantically close</em>. It famously misses exact identifiers — an agent looking up &ldquo;order #A47-2291&rdquo; will get documents about orders generally rather than that specific one. The mitigation is hybrid search: run a vector query and a keyword query in parallel, then fuse the rankings.</p>
+
+<p>Reciprocal Rank Fusion (RRF) is the standard fuser. Each document gets a score of <code>sum(1 / (k + rank_i))</code> across the rankers. PGVector pairs naturally with PostgreSQL's <code>tsvector</code> full-text search; the fusion is application-level:</p>
+
+<pre data-lang="Java"><code>public List&lt;Document&gt; hybridSearch(String query, String tenantId) {
+
+    // 1. Semantic ranking
+    List&lt;Document&gt; vectorHits = vectorStore.similaritySearch(
+        SearchRequest.builder()
+            .query(query).topK(20)
+            .filterExpression("tenant_id == '" + tenantId + "'")
+            .build());
+
+    // 2. Lexical ranking (parallel, via jdbcTemplate or repository)
+    List&lt;Document&gt; lexicalHits = lexicalSearch(query, tenantId, 20);
+
+    // 3. RRF fusion
+    return reciprocalRankFusion(vectorHits, lexicalHits, 60).stream()
+        .limit(5)
+        .toList();
+}
+
+private List&lt;Document&gt; reciprocalRankFusion(
+        List&lt;Document&gt; a, List&lt;Document&gt; b, int k) {
+    Map&lt;String, Double&gt; scores = new HashMap&lt;&gt;();
+    rank(a, k, scores);
+    rank(b, k, scores);
+    return scores.entrySet().stream()
+        .sorted(Map.Entry.&lt;String, Double&gt;comparingByValue().reversed())
+        .map(e -&gt; findById(a, b, e.getKey()))
+        .toList();
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">When hybrid earns its complexity</span>
+<p>Pure vector retrieval is sufficient when the corpus is conceptual and the queries are conceptual (&ldquo;explain our overdraft policy&rdquo;). Hybrid pays off as soon as queries reference specific entities — IDs, account numbers, dates, product SKUs. For financial workloads where exact reference matters, hybrid is the default.</p>
+</div>
+
+<h3>Re-ranking with a cross-encoder</h3>
+
+<p>For high-stakes retrieval, an additional re-ranking step using a cross-encoder model (e.g., a small dedicated re-ranker, or the LLM itself in a structured-output mode) further sharpens the top-K. This adds a network round trip but lifts precision substantially. Worth measuring; not always worth deploying.</p>
+</section>
+
+<!-- ============ SECTION 12 ============ -->
+<section id="consolidation">
+<span class="section-number">§ 12</span>
+<h2>Memory Consolidation</h2>
+
+<p>Episodic memory is verbose — every turn, including small talk and clarifications. Semantic memory is condensed — facts worth remembering across sessions. The bridge is <strong>consolidation</strong>: a background process that reads recent episodic memory, extracts the durable knowledge, and writes it to semantic memory as a derived artifact.</p>
+
+<p>This is also where human memory and AI memory diverge most usefully. Humans consolidate during sleep; agents consolidate on a Kestra schedule. The pattern is the same.</p>
+
+<h3>The consolidation loop</h3>
+
+<div class="diagram">
+<div class="diagram-title">Episodic → Semantic Consolidation</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Scheduler</span>
+      <div class="flow-desc">Kestra workflow runs nightly. Selects closed conversations from the prior 24 hours (or the agent's configured window).</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Extractor</span>
+      <div class="flow-desc">For each conversation, an LLM call with a structured-output schema (e.g., <code>BeanOutputConverter&lt;ExtractedFacts&gt;</code>) extracts candidate facts: preferences stated, decisions made, entities mentioned with attributes.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Deduplicator</span>
+      <div class="flow-desc">Each candidate is embedded and compared to existing semantic memory. Near-duplicates are merged with an updated timestamp; conflicts are flagged for resolution.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Writer</span>
+      <div class="flow-desc">Surviving facts are written to <code>semantic_memory</code> with metadata: <code>source=consolidation</code>, <code>derived_from=&lt;conv_id&gt;</code>, <code>scope=user:&lt;id&gt;</code> or <code>shared</code>, <code>confidence=&lt;score&gt;</code>.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <span class="flow-actor">Auditor</span>
+      <div class="flow-desc">A digest of new/updated/conflicted facts is written to the audit sink, including the source conversation IDs, for review and recall.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h3>In-line consolidation via custom advisor</h3>
+
+<p>For agents where consolidation needs to happen in near-real-time rather than nightly, a custom <code>CallAdvisor</code> can run extraction inline after each turn. The pattern follows the Redis example in the Spring AI community blogs — an advisor with <code>Ordered.HIGHEST_PRECEDENCE + 60</code> that runs after the main chain, extracts memories from the response, and writes them asynchronously.</p>
+
+<pre data-lang="Java"><code>@Component
+public class ConsolidationAdvisor implements CallAdvisor, Ordered {
+
+    private final ChatModel chatModel;
+    private final VectorStore semanticStore;
+    private final BeanOutputConverter&lt;ExtractedFacts&gt; converter =
+        new BeanOutputConverter&lt;&gt;(ExtractedFacts.class);
+    private final TaskExecutor backgroundExecutor;
+
+    @Override public int getOrder() { return Ordered.HIGHEST_PRECEDENCE + 60; }
+    @Override public String getName() { return "ConsolidationAdvisor"; }
+
+    @Override
+    public ChatClientResponse adviseCall(ChatClientRequest req, CallAdvisorChain chain) {
+        ChatClientResponse response = chain.nextCall(req);
+
+        // Extract on a background thread — do not extend the turn's latency
+        backgroundExecutor.execute(() -&gt; extractAndStore(req, response));
+
+        return response;
+    }
+
+    private void extractAndStore(ChatClientRequest req, ChatClientResponse response) {
+        String prompt = """
+            Extract durable facts about the user from this exchange.
+            Return JSON: %s
+            User: %s
+            Assistant: %s
+            """.formatted(converter.getFormat(),
+                          extractUserText(req), extractAssistantText(response));
+        try {
+            ChatResponse extraction = chatModel.call(new Prompt(prompt));
+            ExtractedFacts facts = converter.convert(
+                extraction.getResult().getOutput().getText());
+            persist(facts);
+        } catch (Exception e) {
+            // Consolidation failures must not break the user-facing turn
+            log.warn("Consolidation failed", e);
+        }
+    }
+}</code></pre>
+
+<div class="callout warn">
+<span class="callout-label">Consolidation must be idempotent and reversible</span>
+<p>A consolidation bug that writes wrong facts is worse than not consolidating at all — bad semantic memory poisons every future retrieval. Always tag derived memories with <code>derived_from</code> pointing back to the source conversation, and provide a tool to revoke all derived memories from a given source. Without this, errors compound and become unrecoverable.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 13 ============ -->
+<section id="governance">
+<span class="section-number">§ 13</span>
+<h2>Governance, Audit, and Forgetting</h2>
+
+<p>In a SOX environment, memory is regulated data. The same scrutiny that applies to a database of customer records applies to the agent's episodic store and semantic store. The architectural requirements have four pillars: <em>retention</em>, <em>auditability</em>, <em>access control</em>, and <em>right to be forgotten</em>.</p>
+
+<h3>Retention</h3>
+
+<p>Every memory store must have a declared retention policy enforced by automation, not by good intentions:</p>
+
+<table>
+  <thead>
+    <tr><th>Store</th><th>Default retention</th><th>Mechanism</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Episodic (JDBC / PostgreSQL)</td><td>90 days</td><td>Scheduled <code>DELETE</code> job, partitioned tables</td></tr>
+    <tr><td>Episodic (Cassandra)</td><td>90 days</td><td>Native row-level TTL</td></tr>
+    <tr><td>Semantic (user-scoped)</td><td>Lifetime of user + 90 days post-deletion</td><td>Metadata flag + sweep job</td></tr>
+    <tr><td>Semantic (shared)</td><td>Indefinite, version-controlled</td><td>Ingestion provenance tracking</td></tr>
+    <tr><td>Procedural (prompts/tools)</td><td>Git history retained indefinitely</td><td>Standard SCM</td></tr>
+    <tr><td>Consolidation audit log</td><td>7 years (SOX-aligned)</td><td>Immutable append-only sink</td></tr>
+  </tbody>
+</table>
+
+<h3>Auditability</h3>
+
+<p>Every memory write should be observable. The mechanism is the same as for any other production action: structured logs with trace ID + identity context. The minimum schema for a memory-write audit record:</p>
+
+<pre data-lang="JSON"><code>{
+  "event": "memory.write",
+  "memory_type": "semantic",
+  "operation": "add",
+  "tenant_id": "fhlb-des-moines",
+  "principal": { "sub": "user-12345", "act": "agent-claims" },
+  "scope": "user:user-12345",
+  "source": "consolidation",
+  "derived_from": "conv-abc-123",
+  "document_ids": ["doc-xyz-789"],
+  "trace_id": "01HQ8...",
+  "timestamp": "2026-05-27T14:32:11Z"
+}</code></pre>
+
+<p>This record joins the standard application audit stream. Trace ID is the join key against operational observability (Phoenix / Langfuse). For high-value memories (e.g., agent-generated decisions that influenced a downstream action), forward a copy to the dedicated audit sink discussed in the identity document, §11.</p>
+
+<h3>Right to be forgotten</h3>
+
+<p>GDPR and similar regulations require the ability to delete all data associated with a specific user on request. For memory this means a coordinated operation across all three persistent stores:</p>
+
+<pre data-lang="Java"><code>@Service
+public class MemoryDeletionService {
+
+    private final ChatMemoryRepository episodicRepo;
+    private final VectorStore semanticStore;
+    private final JdbcTemplate jdbcTemplate;
+    private final AuditLogger audit;
+
+    @Transactional
+    public DeletionReport forgetUser(String tenantId, String userId, String requestId) {
+        audit.log("memory.delete.start",
+            Map.of("user", userId, "request", requestId));
+
+        // 1. Episodic — delete all conversations for the user
+        List&lt;String&gt; conversationIds = jdbcTemplate.queryForList(
+            "SELECT id FROM conversation_metadata WHERE user_id = ? AND tenant_id = ?",
+            String.class, userId, tenantId);
+        conversationIds.forEach(episodicRepo::deleteByConversationId);
+
+        // 2. Semantic — delete user-scoped documents and consolidation derivatives
+        // (Implementation depends on VectorStore; PGVector supports SQL DELETE)
+        int semanticDeleted = jdbcTemplate.update(
+            "DELETE FROM ai.semantic_memory " +
+            "WHERE metadata-&gt;&gt;'tenant_id' = ? " +
+            "  AND (metadata-&gt;&gt;'scope' = ? OR " +
+            "       metadata-&gt;&gt;'derived_from' IN (SELECT id FROM conversation_metadata " +
+            "                                      WHERE user_id = ?))",
+            tenantId, "user:" + userId, userId);
+
+        // 3. Audit — record the deletion itself (this record is retained)
+        DeletionReport report = new DeletionReport(
+            conversationIds.size(), semanticDeleted, Instant.now());
+        audit.log("memory.delete.complete",
+            Map.of("user", userId, "request", requestId, "report", report));
+
+        return report;
+    }
+}</code></pre>
+
+<div class="callout">
+<span class="callout-label">The deletion record is retained — that is the point</span>
+<p>Deleting a user's data does not mean forgetting that the deletion happened. The audit record of the deletion is preserved indefinitely, with the request ID linking back to the legal/compliance request that triggered it. This is the standard pattern across GDPR-compliant systems and applies cleanly here.</p>
+</div>
+
+<h3>Memory poisoning as an attack class</h3>
+
+<p>Agents that write to their own memory create a new attack surface: <strong>memory poisoning</strong>. An attacker who can influence what the agent sees in one session — by injecting content into a document, an email, or a prior conversation — can plant misleading &ldquo;facts&rdquo; that get consolidated into long-term memory and influence future sessions, including those involving other users.</p>
+
+<p>Mitigations:</p>
+
+<ul>
+  <li><strong>Provenance metadata on every semantic write.</strong> Always know the source — user input, document ingestion, consolidation. Treat sources differently at retrieval time.</li>
+  <li><strong>Trust tiers on retrieval.</strong> Memories sourced from authoritative documents weight higher than memories derived from conversation.</li>
+  <li><strong>Consolidation must not auto-promote user-asserted facts to shared scope.</strong> A fact a user tells the agent stays in <code>user:&lt;id&gt;</code> scope unless explicitly curated into <code>shared</code>.</li>
+  <li><strong>Approval gates for high-value memory writes.</strong> Spring AI's emerging <code>ToolApprovalStrategy</code> hook generalizes to memory writes; require human or rule-based approval for writes that could affect shared knowledge.</li>
+</ul>
+</section>
+
+<!-- ============ SECTION 14 ============ -->
+<section id="failure">
+<span class="section-number">§ 14</span>
+<h2>Failure Modes</h2>
+
+<p>The architectural patterns above prevent specific failures. Knowing the failures by name makes the patterns easier to defend in review.</p>
+
+<table>
+  <thead>
+    <tr><th>Failure mode</th><th>Symptom</th><th>Mitigation</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Context window overflow</strong></td>
+      <td>Old turns silently truncated; agent forgets earlier instructions</td>
+      <td>Explicit token budgets per plane; summarization for older turns</td>
+    </tr>
+    <tr>
+      <td><strong>Cross-tenant leak</strong></td>
+      <td>Retrieval returns documents from another tenant</td>
+      <td>Mandatory <code>tenant_id</code> filter wrapper; integration tests verify isolation</td>
+    </tr>
+    <tr>
+      <td><strong>Stale procedural drift</strong></td>
+      <td>Tool descriptions or system prompts edited without review; agent behavior changes silently</td>
+      <td>System prompt + tool descriptions in Git, change review required</td>
+    </tr>
+    <tr>
+      <td><strong>Embedding/model mismatch</strong></td>
+      <td>Retrieval quality degrades after embedding model change</td>
+      <td>Re-embed everything; record embedding model in metadata</td>
+    </tr>
+    <tr>
+      <td><strong>Consolidation poisoning</strong></td>
+      <td>Wrong facts accumulate; retrieval surfaces hallucinations</td>
+      <td>Provenance tracking; reversible consolidation; trust tiers</td>
+    </tr>
+    <tr>
+      <td><strong>Episodic store unbounded growth</strong></td>
+      <td>Database fills; latency degrades</td>
+      <td>TTL or scheduled deletion; partitioned tables</td>
+    </tr>
+    <tr>
+      <td><strong>Stuck conversation IDs</strong></td>
+      <td>Same conversation ID reused across sessions; memory bleeds</td>
+      <td>UUID per session; never derive from user ID alone</td>
+    </tr>
+    <tr>
+      <td><strong>Hot top-K</strong></td>
+      <td>Same few documents always retrieved regardless of query</td>
+      <td>Similarity threshold + diversity re-ranking; tune <code>topK</code></td>
+    </tr>
+    <tr>
+      <td><strong>Memory-as-conversation history exposure</strong></td>
+      <td>Users see other users' conversations via a debug endpoint</td>
+      <td>Conversation ID lookup endpoints require IDOR-safe authorization</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="principle">
+<p>Every memory bug a production agent ships with is a bug it ships to every conversation. Test memory in isolation, with synthetic data, before any user-facing rollout.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 15 ============ -->
+<section id="patterns">
+<span class="section-number">§ 15</span>
+<h2>Patterns to Establish</h2>
+
+<p>These are the principles worth codifying as platform-wide standards, applicable to every new agent and to any non-AI service that maintains stateful context.</p>
+
+<ol>
+  <li><strong>Four memory types, named explicitly.</strong> Working, episodic, semantic, procedural. Every architecture review for a new agent answers: what does each plane look like for this agent?</li>
+  <li><strong>Episodic via <code>ChatMemoryRepository</code>, persisted by default.</strong> JDBC over PostgreSQL is the standard; Cassandra for high-throughput. In-memory is for local development only.</li>
+  <li><strong>Semantic via <code>VectorStore</code>, PGVector by default.</strong> Mandatory metadata: <code>tenant_id</code>, <code>scope</code>, <code>source</code>, <code>created_at</code>. Retrieval through a tenant-scoped service wrapper; never directly.</li>
+  <li><strong>Procedural in Git, versioned, reviewed.</strong> System prompts as resource files. Tool descriptions are behavior — changes require PR review.</li>
+  <li><strong>One conversation ID = one session.</strong> UUID per session, never derived from user ID alone. Conversation metadata table maps conversation → user/tenant/agent for governance queries.</li>
+  <li><strong>Filter expressions are mandatory on semantic retrieval.</strong> Default-deny: code paths that bypass the tenant-scoped wrapper require explicit security review.</li>
+  <li><strong>Memory primitives are usable outside <code>ChatClient</code>.</strong> Batch jobs and Kestra workflows call <code>ChatMemory</code>, <code>VectorStore</code>, and <code>ToolCallingManager</code> directly. The <code>ChatClient</code> sugar is removable when the situation warrants.</li>
+  <li><strong>Retention policy is declared per agent class.</strong> Default 90 days episodic; semantic per scope; consolidation audit log 7 years.</li>
+  <li><strong>Right to be forgotten is implemented before launch.</strong> Coordinated deletion across episodic, semantic, and derivatives. Deletion itself is audited.</li>
+  <li><strong>Consolidation is async, reversible, and provenance-tagged.</strong> Never on the user's critical path. Every derived memory points back to its source. User-asserted facts do not auto-promote to shared scope.</li>
+  <li><strong>Identity propagates into memory.</strong> The same <code>Authentication</code> that scopes downstream API calls scopes memory reads and writes. <code>tenant_id</code> always comes from a validated token claim, never from request input.</li>
+  <li><strong>Memory writes are observable.</strong> Structured audit events on every persistent write, joined by trace ID to operational observability.</li>
+</ol>
+
+<div class="principle">
+<p>The architecture for AI memory is the architecture for any stateful, multi-tenant, regulated service that retains context across sessions. The AI use case forces the conversation; the patterns benefit everything that comes after.</p>
+</div>
+</section>
+
+<!-- ============ POC SECTION ============ -->
+<section id="poc" class="poc-section">
+<span class="section-number">§ 16</span>
+<h2>POC Injection Points</h2>
+
+<div class="poc-intro">
+<p>Each POC below is a self-contained scope that exercises one concept from this document. The <strong>Claude Code prompt blocks</strong> are intended as starting points — paste them into a Claude Code session, refine with environment-specific detail (database connection details, embedding model identifiers, tenant identifiers, downstream service names), and iterate. POCs are ordered from foundational to compositional; later POCs assume the earlier ones are in place.</p>
+</div>
+
+<!-- POC 1 -->
+<div class="poc-card">
+<div class="poc-id">POC 01</div>
+<div class="poc-title">JDBC-backed episodic memory for a Spring AI agent</div>
+<div class="poc-scope">Scope · Plane 2 — Episodic memory</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — PostgreSQL 14+ reachable from local environment. Access to a chat model endpoint (NIM via LiteLLM proxy or equivalent).</div>
+
+<p>Demonstrates that a Spring AI agent can persist conversation history to PostgreSQL via <code>JdbcChatMemoryRepository</code>, restore conversation state across application restarts, and isolate conversations by conversation ID.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring Boot 3.4+ service using Spring AI 1.1.x that exposes a conversational chat endpoint backed by JDBC-persisted episodic memory. Requirements:</p>
+<p>1. Use <code>spring-ai-starter-model-chat-memory-repository-jdbc</code>. Configure <code>JdbcChatMemoryRepository</code> with <code>PostgresChatMemoryRepositoryDialect</code>.<br>
+2. Apply the Spring AI schema (from <code>classpath:org/springframework/ai/chat/memory/repository/jdbc/schema-postgresql.sql</code>) via Flyway — do not rely on auto-creation.<br>
+3. Add a sibling <code>conversation_metadata</code> table linking <code>conversation_id</code> → <code>user_id</code>, <code>tenant_id</code>, <code>agent_id</code>, <code>created_at</code>, <code>last_used_at</code>.<br>
+4. Configure <code>MessageWindowChatMemory</code> with <code>maxMessages=20</code>.<br>
+5. Configure the <code>ChatClient</code> with <code>MessageChatMemoryAdvisor</code>.<br>
+6. Expose <code>POST /api/chat/{conversationId}</code> and <code>GET /api/conversations/{conversationId}/history</code>. Reject conversation IDs that don't match a strict UUID pattern.<br>
+7. Add a scheduled task that deletes conversations whose <code>last_used_at</code> is older than 90 days, configurable per-tenant via properties.<br>
+8. Integration test verifying: (a) history survives application restart, (b) two different conversation IDs are isolated, (c) the sliding window evicts oldest messages beyond <code>maxMessages</code>.</p>
+<p>Produce: <code>build.gradle</code>, <code>application.yml</code>, Flyway migration files, <code>EpisodicMemoryConfig.java</code>, <code>ChatController.java</code>, <code>ConversationMetadataRepository.java</code>, <code>EpisodicRetentionJob.java</code>, and the integration test using Testcontainers PostgreSQL.</p>
+</div>
+</div>
+
+<!-- POC 2 -->
+<div class="poc-card">
+<div class="poc-id">POC 02</div>
+<div class="poc-title">PGVector semantic memory with tenant-scoped retrieval</div>
+<div class="poc-scope">Scope · Plane 3 — Semantic memory</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 01 complete. PostgreSQL with <code>pgvector</code> extension installed. Embedding model endpoint reachable (NIM <code>nv-embedqa-e5-v5</code> or equivalent).</div>
+
+<p>Demonstrates a semantic memory store that enforces tenant isolation, supports user/shared/agent scopes, and exposes both ingestion and retrieval through a service wrapper that prevents direct unfiltered access.</p>
+
+<div class="prompt-injection">
+<p>Extend the POC 01 service with semantic memory backed by PGVector. Requirements:</p>
+<p>1. Configure <code>PgVectorStore</code> with <code>HNSW</code> index, <code>COSINE_DISTANCE</code>, dimension matching the embedding model. Use Flyway to create the table and index — do not use <code>initializeSchema(true)</code>.<br>
+2. Every <code>Document</code> stored must include metadata: <code>tenant_id</code>, <code>scope</code> (one of <code>shared</code> | <code>user:&lt;id&gt;</code> | <code>agent:&lt;id&gt;</code>), <code>source</code>, <code>created_at</code>, <code>embedding_model</code>.<br>
+3. Implement <code>SemanticMemoryService</code> with two methods: <code>ingest(text, metadata)</code> and <code>retrieve(query, Authentication)</code>. <strong>Direct injection of <code>VectorStore</code> elsewhere in the codebase must be prevented</strong> — make <code>VectorStore</code> a package-private bean exposed only through <code>SemanticMemoryService</code>.<br>
+4. <code>retrieve</code> always extracts <code>tenant_id</code> and <code>userId</code> from the JWT, builds the filter <code>tenant_id == '...' &amp;&amp; (scope == 'shared' || scope == 'user:...' || scope == 'agent:...')</code>, applies <code>topK=5</code> and <code>similarityThreshold=0.7</code>.<br>
+5. Validate tenant and user IDs against <code>[a-zA-Z0-9\-]+</code> before composing into the filter expression. Reject any ID that doesn't match.<br>
+6. Add <code>POST /api/memory/ingest</code> (requires <code>memory:write</code> scope) and integrate retrieval into the chat endpoint via <code>QuestionAnswerAdvisor</code> with a dynamic <code>SearchRequest</code> per call.<br>
+7. Integration test: (a) ingest documents under two tenants, (b) confirm a query authenticated as tenant A never returns tenant B's documents, (c) confirm <code>user:U1</code> scope is invisible to <code>user:U2</code>.</p>
+<p>Produce: <code>SemanticMemoryConfig.java</code>, <code>SemanticMemoryService.java</code>, Flyway migration for the vector table, updated <code>ChatController.java</code>, and the multi-tenant isolation test.</p>
+</div>
+</div>
+
+<!-- POC 3 -->
+<div class="poc-card">
+<div class="poc-id">POC 03</div>
+<div class="poc-title">Procedural memory — versioned prompts + tool catalog</div>
+<div class="poc-scope">Scope · Plane 4 — Procedural memory</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 01 complete.</div>
+
+<p>Demonstrates the procedural memory pattern: system prompts as version-controlled resources, tool descriptions pinned in tests, and a tool catalog that supports filtering by tenant policy.</p>
+
+<div class="prompt-injection">
+<p>Add procedural memory to the POC 01/02 service. Requirements:</p>
+<p>1. Store the agent's system prompt as <code>src/main/resources/prompts/claims-agent-v1.st</code> with templated variables (<code>{tenantName}</code>, <code>{currentDate}</code>).<br>
+2. Load it as a <code>PromptTemplate</code> bean. The version suffix in the filename is the canonical version identifier.<br>
+3. Define at least three <code>@Tool</code>-annotated methods on an <code>AccountTools</code> component (e.g., <code>getBalance</code>, <code>getRecentTransactions</code>, <code>flagSuspiciousActivity</code>). Each tool's <code>description</code> string is loaded from a resource file (<code>tool-descriptions.yml</code>) rather than hard-coded — this is so descriptions can be reviewed as configuration.<br>
+4. Write a test that pins every <code>@Tool</code> description string. The test reads the descriptions via reflection and compares to expected values in a golden file. Any change to a description without a corresponding golden file update fails the build.<br>
+5. Add a <code>ToolPolicyService</code> that, given a tenant ID, returns the allowed set of tool names. The <code>ChatClient</code> configuration filters available <code>@Tool</code>s based on policy at request time.<br>
+6. Bonus: implement a custom <code>ToolApprovalStrategy</code> (per Spring AI's emerging API) that requires human approval for tools tagged <code>@RequiresApproval</code>.</p>
+<p>Produce: prompt template file, tool description YAML, <code>AccountTools.java</code>, <code>ToolPolicyService.java</code>, <code>ToolDescriptionPinningTest.java</code>, and updated chat configuration.</p>
+</div>
+</div>
+
+<!-- POC 4 -->
+<div class="poc-card">
+<div class="poc-id">POC 04</div>
+<div class="poc-title">Memory primitives outside ChatClient — Kestra-driven batch agent</div>
+<div class="poc-scope">Scope · Composition — Programmatic agent loop</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–03 complete. Kestra instance reachable.</div>
+
+<p>Demonstrates driving the full memory stack (episodic + semantic + procedural + tools) directly via <code>ChatModel</code> and <code>ToolCallingManager</code>, with no <code>ChatClient</code> in the loop. This is the pattern for any batch, scheduled, or event-driven agent work.</p>
+
+<div class="prompt-injection">
+<p>Build a batch agent that processes a list of closed claim cases overnight and writes structured notes back. The agent runs as a Spring Boot CLI job triggered by Kestra. Requirements:</p>
+<p>1. <strong>No <code>ChatClient</code></strong>. Use <code>ChatModel</code>, <code>ToolCallingManager</code>, <code>ChatMemory</code>, and <code>VectorStore</code> directly.<br>
+2. Job input: a list of <code>caseId</code>s passed as program arguments. For each case:<br>
+&nbsp;&nbsp;&nbsp;a. Build a conversation ID (<code>batch-claim-{caseId}-{runId}</code>) and a fresh <code>ChatMemory</code> for it.<br>
+&nbsp;&nbsp;&nbsp;b. Retrieve case-relevant context from semantic memory using the case ID and known case metadata.<br>
+&nbsp;&nbsp;&nbsp;c. Compose a <code>Prompt</code> with: procedural system prompt, retrieved semantic context as a system message, empty episodic history (fresh conversation), and a structured user message instructing the agent to analyze the case.<br>
+&nbsp;&nbsp;&nbsp;d. Configure <code>ToolCallingChatOptions</code> with <code>internalToolExecutionEnabled(false)</code> and a set of read-only tools (e.g., <code>getClaimDetails</code>, <code>getRelatedCases</code>).<br>
+&nbsp;&nbsp;&nbsp;e. Loop: call <code>chatModel.call(prompt)</code>; while <code>response.hasToolCalls()</code>, execute via <code>toolCallingManager.executeToolCalls</code> and continue.<br>
+&nbsp;&nbsp;&nbsp;f. After the loop, parse the response into a structured <code>ClaimAnalysis</code> object (use <code>BeanOutputConverter</code>).<br>
+&nbsp;&nbsp;&nbsp;g. Persist the analysis to the claims database and write a summary fact to semantic memory with <code>scope=agent:claims-batch</code>.<br>
+3. Job emits structured audit events for each case: tool calls made, final analysis, latency, token cost.<br>
+4. Job is idempotent: re-running the same <code>caseId</code> + <code>runId</code> uses the existing conversation ID and short-circuits if the analysis already exists.<br>
+5. Kestra flow definition that triggers the job nightly with the prior day's closed cases.</p>
+<p>Produce: <code>ClaimBatchAgent.java</code>, <code>ClaimAnalysisOutput.java</code> (record), <code>build.gradle</code> with CLI runner configuration, Kestra YAML flow, and an integration test that runs the agent against a mocked <code>ChatModel</code> returning canned tool calls.</p>
+</div>
+</div>
+
+<!-- POC 5 -->
+<div class="poc-card">
+<div class="poc-id">POC 05</div>
+<div class="poc-title">Hybrid search — vector + tsvector with RRF fusion</div>
+<div class="poc-scope">Scope · Plane 3 — Retrieval quality</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 02 complete.</div>
+
+<p>Demonstrates that combining vector similarity with PostgreSQL full-text search via Reciprocal Rank Fusion materially improves retrieval for queries containing specific identifiers (account numbers, case IDs, dates).</p>
+
+<div class="prompt-injection">
+<p>Extend <code>SemanticMemoryService</code> with hybrid search. Requirements:</p>
+<p>1. Add a <code>tsvector</code> column to the semantic memory table populated from the document text. Maintain it via a database trigger or Flyway-managed generated column.<br>
+2. Implement <code>hybridSearch(query, Authentication)</code>:<br>
+&nbsp;&nbsp;&nbsp;a. Vector ranking: <code>vectorStore.similaritySearch</code> with <code>topK=20</code> and the tenant-scoped filter.<br>
+&nbsp;&nbsp;&nbsp;b. Lexical ranking: SQL query using <code>ts_rank_cd</code> against the <code>tsvector</code> column with the same tenant filter, limit 20.<br>
+&nbsp;&nbsp;&nbsp;c. Fuse using RRF (<code>k=60</code>); return the top 5 documents by fused score.<br>
+3. Add a feature flag <code>memory.retrieval.mode</code> with values <code>vector</code>, <code>lexical</code>, <code>hybrid</code>. Default to <code>hybrid</code>.<br>
+4. Add a benchmark test using a synthetic corpus that includes both conceptual content and unique identifier strings. Measure recall@5 for three query classes: conceptual queries, identifier queries, mixed queries. Compare all three modes.<br>
+5. Document the resulting trade-offs in a markdown file in the repo.</p>
+<p>Produce: Flyway migration adding the <code>tsvector</code> column and index, updated <code>SemanticMemoryService.java</code>, <code>HybridSearchBenchmarkTest.java</code> using a fixture corpus, and the trade-off documentation.</p>
+</div>
+</div>
+
+<!-- POC 6 -->
+<div class="poc-card">
+<div class="poc-id">POC 06</div>
+<div class="poc-title">Async consolidation — episodic → semantic</div>
+<div class="poc-scope">Scope · Composition — Memory consolidation</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–02 complete.</div>
+
+<p>Demonstrates the consolidation loop: a background process extracts durable facts from closed conversations, deduplicates against existing semantic memory, and writes new facts with full provenance.</p>
+
+<div class="prompt-injection">
+<p>Build a consolidation pipeline as a Kestra workflow that runs nightly. Requirements:</p>
+<p>1. Query closed conversations (no activity in the last 24 hours) from <code>conversation_metadata</code>.<br>
+2. For each conversation, load the full message history via <code>ChatMemoryRepository.findByConversationId</code>.<br>
+3. Use <code>ChatModel</code> with <code>BeanOutputConverter&lt;ExtractedFacts&gt;</code> to extract candidate facts. The <code>ExtractedFacts</code> record should include a list of <code>Fact(content, confidence, fact_type)</code> entries.<br>
+4. For each candidate fact:<br>
+&nbsp;&nbsp;&nbsp;a. Embed and run a similarity search against existing semantic memory scoped to the same user.<br>
+&nbsp;&nbsp;&nbsp;b. If a near-duplicate exists (similarity &gt; 0.9), merge (update timestamp, increment a <code>reinforcement_count</code> metadata field).<br>
+&nbsp;&nbsp;&nbsp;c. If no duplicate, write the fact with metadata: <code>source=consolidation</code>, <code>derived_from=&lt;conversation_id&gt;</code>, <code>scope=user:&lt;user_id&gt;</code>, <code>confidence</code>.<br>
+5. Emit a structured audit event for every write/merge with the source conversation ID.<br>
+6. <strong>Reversibility</strong>: add a <code>POST /api/memory/revoke</code> endpoint (admin-only) that takes a conversation ID and deletes all semantic memory derived from it.<br>
+7. Integration test: seed a conversation containing 3 distinct facts and 1 reaffirmation of a 4th fact; run consolidation; assert 3 new entries and 1 merge with incremented <code>reinforcement_count</code>.</p>
+<p>Produce: <code>ConsolidationService.java</code>, <code>ExtractedFacts.java</code>, <code>MemoryRevocationController.java</code>, Kestra flow definition, and the integration test.</p>
+</div>
+</div>
+
+<!-- POC 7 -->
+<div class="poc-card">
+<div class="poc-id">POC 07</div>
+<div class="poc-title">Right-to-be-forgotten across all memory stores</div>
+<div class="poc-scope">Scope · Governance — Coordinated deletion</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01, 02, 06 complete.</div>
+
+<p>Demonstrates a single operation that deletes all memory associated with a user across episodic and semantic stores, including consolidation derivatives, while preserving an audit record of the deletion itself.</p>
+
+<div class="prompt-injection">
+<p>Implement a user-deletion service that meets GDPR-style requirements. Requirements:</p>
+<p>1. <code>POST /api/admin/forget</code> endpoint, requires <code>memory:admin</code> scope and a <code>request_id</code> parameter (links to the compliance system).<br>
+2. <code>MemoryDeletionService.forgetUser(tenantId, userId, requestId)</code>:<br>
+&nbsp;&nbsp;&nbsp;a. Look up all conversation IDs for the user from <code>conversation_metadata</code>.<br>
+&nbsp;&nbsp;&nbsp;b. Delete each via <code>chatMemoryRepository.deleteByConversationId</code>.<br>
+&nbsp;&nbsp;&nbsp;c. Delete all semantic memory where <code>scope = user:&lt;userId&gt;</code> for the tenant.<br>
+&nbsp;&nbsp;&nbsp;d. Delete all semantic memory where <code>derived_from</code> is in the set of deleted conversation IDs.<br>
+&nbsp;&nbsp;&nbsp;e. Delete the rows from <code>conversation_metadata</code> itself.<br>
+3. All deletions inside a single transaction. On any failure, the entire operation rolls back and the audit log records the failure.<br>
+4. <strong>The audit record of the deletion is retained indefinitely</strong> in a separate, append-only audit sink. The record includes: timestamp, requester identity, request ID, tenant ID, user ID, counts of items deleted per store, transaction outcome.<br>
+5. Integration test: seed data across all three stores (multiple conversations, user-scoped semantic facts, consolidation-derived semantic facts), run <code>forgetUser</code>, verify all the user's data is gone, verify shared/tenant-scoped data for other users is untouched, verify the audit record exists.<br>
+6. Add a chaos test that injects a failure mid-deletion (e.g., simulate a semantic store outage) and verifies that no partial deletion occurred.</p>
+<p>Produce: <code>MemoryDeletionService.java</code>, <code>AdminMemoryController.java</code>, <code>DeletionReport.java</code> (record), audit sink configuration, the happy-path integration test, and the chaos test.</p>
+</div>
+</div>
+
+<!-- POC 8 -->
+<div class="poc-card">
+<div class="poc-id">POC 08</div>
+<div class="poc-title">Full-stack agent with all four memory types</div>
+<div class="poc-scope">Scope · Composition — End-to-end agent</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–07 complete.</div>
+
+<p>The capstone POC: a single agent service exercising working, episodic, semantic, and procedural memory together, with identity propagation per the Identity Management document, audit emission, and the full retention/deletion lifecycle.</p>
+
+<div class="prompt-injection">
+<p>Build a member-services agent that demonstrates all four memory types working together. Requirements:</p>
+<p>1. Resource server validating user JWTs (per Identity Management POC 01) — extract <code>tenant_id</code> and <code>sub</code> on every request.<br>
+2. <strong>Procedural</strong>: system prompt versioned in Git; three tools (<code>getAccountBalance</code>, <code>getRecentTransactions</code>, <code>updateContactPreference</code>); each tool performs OBO exchange (per Identity Management POC 03/04) and emits an audit event.<br>
+3. <strong>Episodic</strong>: <code>JdbcChatMemoryRepository</code> over PostgreSQL with the schema from POC 01; conversation IDs are session-scoped UUIDs.<br>
+4. <strong>Semantic</strong>: PGVector store with tenant-scoped retrieval per POC 02; pre-seeded with FHLB-specific glossary entries and example policies; hybrid search enabled per POC 05.<br>
+5. <strong>Consolidation</strong>: nightly Kestra workflow per POC 06.<br>
+6. <strong>Working memory composition</strong>: every chat request loads (system prompt) + (top 5 semantic results) + (last 20 episodic messages) + (current user message), with explicit token budget assertions.<br>
+7. <strong>Audit</strong>: every memory write emits a structured event to a Kafka/pgmq topic; trace ID joins to OTel spans.<br>
+8. <strong>Right to be forgotten</strong>: per POC 07.<br>
+9. End-to-end integration test: simulate a multi-turn conversation that produces consolidated facts; verify the agent uses those facts in a subsequent session under the same user; verify it does <em>not</em> use them in a session under a different user; invoke the forget operation; verify the facts are gone.</p>
+<p>Produce: the complete service repository, Kestra workflow definitions, OpenAPI specification, and the end-to-end test. Document the assumed external dependencies (IdP, NIM endpoint, embedding model, Kestra instance, Phoenix/Langfuse) in the README.</p>
+</div>
+</div>
+
+</section>
+
+</main>
+
+</div>
+
+
+<footer class="site-footer">
+  <div class="container">
+    <div>© <span id="year"></span> my-learnings</div>
+    <div><a href="../">home</a></div>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>

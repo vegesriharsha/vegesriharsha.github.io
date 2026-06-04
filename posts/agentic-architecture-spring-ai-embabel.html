@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic Architecture with Spring AI and Embabel — my-learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/doc.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="logo" href="../" style="text-decoration:none">
+      <div class="logo-top">my · learnings</div>
+      <div class="logo-main">notes <span>&</span> viz</div>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../">Home</a>
+      <a href="../#posts" class="active">Notes</a>
+      <a href="../#viz">Visualizations</a>
+      <a href="../about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="doc-layout">
+
+<aside class="toc">
+<span class="toc-label">Contents</span>
+<ol>
+  <li><a href="#context">Context and Foundations</a></li>
+  <li><a href="#what-is-agent">What an Agent Actually Is</a></li>
+  <li><a href="#autonomy">The Autonomy Spectrum</a></li>
+  <li><a href="#building-blocks">Spring AI Building Blocks</a></li>
+  <li><a href="#workflow-patterns">The Five Workflow Patterns</a></li>
+  <li><a href="#recursive">Recursive Advisors and the Agentic Loop</a></li>
+  <li><a href="#agent-utils">Higher-Order Patterns: Skills, Todo, Subagents</a></li>
+  <li><a href="#limits">Where Hand-Wired Orchestration Strains</a></li>
+  <li><a href="#embabel-model">The Embabel Model: Planning over Wiring</a></li>
+  <li><a href="#goap">GOAP, the Blackboard, and the OODA Loop</a></li>
+  <li><a href="#embabel-planners">Planner Types and Composition</a></li>
+  <li><a href="#relationship">How Spring AI and Embabel Relate</a></li>
+  <li><a href="#deployment">Agent Topology and Deployment</a></li>
+  <li><a href="#auditability">Determinism, Auditability, and Cost</a></li>
+  <li><a href="#decision">A Decision Framework</a></li>
+  <li><a href="#failure">Failure Modes</a></li>
+  <li><a href="#patterns">Patterns to Establish</a></li>
+  <li><a href="#poc">POC Injection Points</a></li>
+</ol>
+</aside>
+
+<main>
+
+<header class="doc-header">
+<div class="doc-eyebrow">Architecture Learning Document</div>
+<h1>Agentic Architecture with <em>Spring AI and Embabel</em></h1>
+<p class="lede">A working architect's notes on building agents on the JVM — composition over frameworks, hand-wired workflows in Spring AI, and goal-directed planning in Embabel — and the threshold that separates the two.</p>
+<dl class="doc-meta">
+  <div>
+    <dt>Audience</dt>
+    <dd>Platform, AI, and Application engineering teams</dd>
+  </div>
+  <div>
+    <dt>Scope</dt>
+    <dd>Conceptual foundations + implementation guidance</dd>
+  </div>
+  <div>
+    <dt>Status</dt>
+    <dd>Living document — patterns evolving</dd>
+  </div>
+</dl>
+</header>
+
+<div class="callout">
+<span class="callout-label">Framework versions assumed</span>
+<p>Patterns and code in this document are anchored to: <strong>Spring Boot 3.5.x</strong> (Embabel's current ceiling) through <strong>4.0</strong> (Spring AI side), <strong>Spring AI 1.1.x (GA, Nov 2025)</strong> with <strong>2.0 M-series</strong> in flight. The five workflow patterns and <strong>recursive advisors</strong> are core; higher-order patterns (Agent Skills, Todo, Subagent, AskUserQuestion) ship in the community <code>spring-ai-agent-utils</code> toolkit (group <code>org.springaicommunity</code>, ~0.4.x, requires Spring AI 2.0.0-M2+). <strong>Embabel</strong> is at <strong>0.3.x-SNAPSHOT</strong> — past the 0.1.x stage noted in earlier evaluations, with GOAP + A* planning, a state-machine planner, Utility AI, and <code>AgenticTool</code> now present; module statuses range stable / incubating / experimental. Pin versions deliberately. This document deliberately does <strong>not</strong> re-cover memory or identity — see the companion documents for those planes.</p>
+</div>
+
+<!-- ============ SECTION 1 ============ -->
+<section id="context">
+<span class="section-number">§ 01</span>
+<h2>Context and Foundations</h2>
+
+<p>The companion documents in this series treat two of the planes an agent runs on: <em>memory</em> (what it remembers) and <em>identity</em> (who it acts as). This document treats the third and most contested plane: <em>control flow</em> — how an agent decides what to do next. That is the plane where the framework choice actually bites, and where the gap between &ldquo;a chatbot with tools&rdquo; and &ldquo;an agent&rdquo; is decided.</p>
+
+<p>For a decade the JVM answer to &ldquo;orchestrate these steps&rdquo; was a state machine, a workflow engine, or hand-written service code. Those answers do not disappear with AI — they are still correct for most of the work. What changes is the introduction of a component, the LLM, whose output is non-deterministic and whose job is sometimes to <em>decide</em> the control flow itself. The architectural question of this document is: when do you let the model decide, when do you decide for it, and what sits in between?</p>
+
+<p>The honest framing, and the one this document commits to: <strong>most production &ldquo;agents&rdquo; are workflows.</strong> They are a known sequence of LLM calls and tool invocations, wired together in ordinary code, with the model supplying judgment at specific points rather than steering the whole flow. Anthropic's own &ldquo;Building Effective Agents&rdquo; guidance — which Spring AI's pattern library is built directly on — draws exactly this line between <em>workflows</em> (predefined paths) and <em>agents</em> (the model directs its own process). Reach for genuine autonomy only when the problem actually demands it.</p>
+
+<div class="principle">
+<p>An agent is not a thing you import. It is a control-flow decision: how much of &ldquo;what happens next&rdquo; you delegate to a non-deterministic component, and how much you keep in code you can read, test, and audit.</p>
+</div>
+
+<p>Two frameworks anchor the JVM conversation. <strong>Spring AI</strong> gives you the primitives — model access, tool calling, advisors, structured output — and leaves orchestration to you, which for hand-wired workflows is exactly right. <strong>Embabel</strong>, from Spring's own creator, adds a planning layer above those primitives: you declare actions and goals, and a non-LLM algorithm assembles the path. This document develops both, and the threshold between them.</p>
+</section>
+
+<!-- ============ SECTION 2 ============ -->
+<section id="what-is-agent">
+<span class="section-number">§ 02</span>
+<h2>What an Agent Actually Is</h2>
+
+<p>Stripped of marketing, an agentic system has four moving parts. Naming them precisely prevents the most common design error — treating &ldquo;agent&rdquo; as an atomic noun rather than a composition of separable concerns.</p>
+
+<div class="planes">
+  <div class="plane">
+    <div class="plane-num">PART 01</div>
+    <div class="plane-title">The Model Call</div>
+    <div class="plane-desc">A single inference: a prompt in, a completion out. Stateless, non-deterministic. Spring AI: <code>ChatModel</code> / <code>ChatClient</code>.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PART 02</div>
+    <div class="plane-title">Tools</div>
+    <div class="plane-desc">The bridge to the outside world — APIs, databases, MCP servers. The model requests; code executes and returns. Spring AI: <code>@Tool</code>, <code>ToolCallback</code>, <code>ToolCallingManager</code>.</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PART 03</div>
+    <div class="plane-title">Control Flow</div>
+    <div class="plane-desc">What runs next, and why. The contested plane. Either you decide (workflow) or the model decides (autonomous agent) — or a planner decides (Embabel).</div>
+  </div>
+  <div class="plane">
+    <div class="plane-num">PART 04</div>
+    <div class="plane-title">Context Assembly</div>
+    <div class="plane-desc">What goes into each call — memory, retrieved knowledge, prior results. Treated fully in the Memory document; here it is an input to control flow.</div>
+  </div>
+</div>
+
+<p>The first two parts are settled engineering. <code>ChatClient</code> wraps the model behind a fluent, <code>WebClient</code>-style builder; <code>@Tool</code>-annotated methods expose Java behavior to the model and participate in Spring Security and Micrometer like any other bean. The interesting decisions all live in part three — and that is where the rest of this document concentrates.</p>
+
+<div class="callout">
+<span class="callout-label">The definition that matters operationally</span>
+<p>A useful working line: it is a <strong>workflow</strong> if you can draw the control-flow graph before the program runs, and an <strong>agent</strong> if you cannot — because the model (or a planner) determines the graph at runtime. This is not a value judgment. Workflows are easier to test, cheaper to run, and trivial to audit. The graph being knowable in advance is a feature, not a limitation, in a SOX-regulated environment. Choose autonomy only where the unpredictability of the problem genuinely requires an unpredictable solution.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 3 ============ -->
+<section id="autonomy">
+<span class="section-number">§ 03</span>
+<h2>The Autonomy Spectrum</h2>
+
+<p>It helps to place every candidate design on a single axis, from least to most delegated control. The cost, testability, and auditability of a system degrade monotonically as you move right. The correct design is the <em>leftmost</em> point that solves the problem.</p>
+
+<table>
+  <thead>
+    <tr><th>Level</th><th>Who decides next step</th><th>Spring AI / Embabel construct</th><th>Auditability</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0 — Single call</td><td>You (one step only)</td><td><code>ChatClient.call()</code></td><td>Trivial</td></tr>
+    <tr><td>1 — Fixed chain</td><td>You (static sequence)</td><td>Chain workflow</td><td>Trivial</td></tr>
+    <tr><td>2 — Conditional</td><td>You + model classifies</td><td>Routing workflow</td><td>High</td></tr>
+    <tr><td>3 — Bounded loop</td><td>Model, within a coded loop</td><td>Evaluator-Optimizer; recursive advisor</td><td>High (loop is bounded)</td></tr>
+    <tr><td>4 — Delegated decomposition</td><td>Model decomposes; you run workers</td><td>Orchestrator-Workers</td><td>Moderate</td></tr>
+    <tr><td>5 — Planned</td><td>Non-LLM planner over declared actions</td><td>Embabel GOAP</td><td>High (plan is explicit)</td></tr>
+    <tr><td>6 — Open autonomy</td><td>Model, unconstrained tool loop</td><td>Raw tool-calling agent</td><td>Low</td></tr>
+  </tbody>
+</table>
+
+<p>Two observations shape the whole document. First, <strong>auditability is not monotonic with autonomy</strong> — level 5 (Embabel) scores higher than level 4 precisely because the planner externalizes the decision into an inspectable plan rather than burying it in an LLM's reasoning. That non-monotonicity is the entire architectural argument for a planner in a regulated shop. Second, the levels are not a ladder you must climb; they are a menu. A realistic platform mixes them: a routing workflow (level 2) that dispatches to a fixed chain (level 1) for one branch and an Embabel plan (level 5) for another.</p>
+
+<div class="callout warn">
+<span class="callout-label">The level-6 trap</span>
+<p>The unconstrained &ldquo;give the model all the tools and let it loop until done&rdquo; pattern is the easiest to demo and the hardest to operate. It has unbounded cost, unbounded latency, no pre-runtime control-flow graph, and an audit story that amounts to &ldquo;read the model's chain of thought.&rdquo; It is occasionally the right answer for genuinely open-ended exploration. It is almost never the right answer for a bounded business process, which is what nearly all enterprise work is.</p>
+</div>
+</section>
+<!-- ============ SECTION 4 ============ -->
+<section id="building-blocks">
+<span class="section-number">§ 04</span>
+<h2>Spring AI Building Blocks</h2>
+
+<p>Before the patterns, the primitives they compose from. Spring AI deliberately keeps these small and orthogonal — the framework's bet is that orchestration belongs in your code, not behind a magic facade. Four building blocks carry almost everything.</p>
+
+<h3>ChatClient — the fluent entry point</h3>
+
+<p><code>ChatClient</code> is the high-level API: a builder-style fluent interface over a <code>ChatModel</code>, modeled on <code>WebClient</code>. It is where you attach a system prompt, user message, advisors, tools, and a structured-output target. For programmatic and batch contexts, you can drop to the <code>ChatModel</code> directly — the same pattern the Memory document uses for non-<code>ChatClient</code> agent loops.</p>
+
+<pre data-lang="Java"><code>String answer = chatClient.prompt()
+    .system("You are a claims-triage assistant.")
+    .user(userMessage)
+    .call()
+    .content();</code></pre>
+
+<h3>Advisors — middleware for the AI call</h3>
+
+<p>Advisors are the interceptor chain for a model interaction — the AI-layer analogue of servlet filters or Spring AOP. Each advisor can mutate the request before the call and the response after it. This is how RAG (<code>QuestionAnswerAdvisor</code>), conversation memory (<code>MessageChatMemoryAdvisor</code>), logging, and guardrails attach <em>without</em> touching business logic. The Advisors API integrates with Micrometer, so every advised call is observable for free.</p>
+
+<div class="callout">
+<span class="callout-label">Why advisors are an architectural primitive, not a convenience</span>
+<p>The advisor chain is the seam where cross-cutting concerns live. Memory composition, retrieval, identity-aware filtering, audit emission, and output validation all attach as advisors rather than being interleaved into orchestration code. A discipline worth adopting: <strong>if a concern applies to every call, it is an advisor; if it is the call's actual purpose, it is orchestration.</strong> Keeping that line clean is what stops a workflow from collapsing into an unmaintainable tangle.</p>
+</div>
+
+<h3>Tool calling — the action primitive</h3>
+
+<p>A <code>@Tool</code>-annotated method is a typed, described capability the model may request. Spring AI handles the JSON-schema generation, the call dispatch, and (by default) the execution-and-resubmit loop. Crucially for programmatic control, that loop is <em>defeatable</em>: setting <code>internalToolExecutionEnabled(false)</code> on <code>ToolCallingChatOptions</code> hands you the raw tool-call requests so you can execute them yourself via <code>ToolCallingManager</code> — the basis for any custom or audited agent loop.</p>
+
+<pre data-lang="Java"><code>// Hand-controlled tool loop — no ChatClient sugar, full audit control
+var options = ToolCallingChatOptions.builder()
+    .toolCallbacks(readOnlyTools)
+    .internalToolExecutionEnabled(false)   // we drive the loop
+    .build();
+
+Prompt prompt = new Prompt(messages, options);
+ChatResponse response = chatModel.call(prompt);
+
+while (response.hasToolCalls()) {
+    ToolExecutionResult result =
+        toolCallingManager.executeToolCalls(prompt, response);
+    auditEmitter.record(result.toolCallResults());   // audit every call
+    prompt = new Prompt(result.conversationHistory(), options);
+    response = chatModel.call(prompt);
+}</code></pre>
+
+<h3>Structured output — the typing primitive</h3>
+
+<p><code>BeanOutputConverter</code> and the <code>.entity(Class)</code> shortcut turn a free-text completion into a typed Java record, with the schema injected into the prompt and the response parsed and validated on return. This is the single most important reliability lever in the toolkit: <strong>every boundary between an LLM call and your code should be a typed object, never a raw string.</strong> Typed boundaries are what make a multi-step flow testable — you assert on records, not on prose.</p>
+
+<div class="principle">
+<p>Strings are where agentic systems rot. Type every boundary. A record between two steps is a contract you can test; a string between two steps is a prayer.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 5 ============ -->
+<section id="workflow-patterns">
+<span class="section-number">§ 05</span>
+<h2>The Five Workflow Patterns</h2>
+
+<p>The five patterns below — codified by Christian Tzolov for Spring AI directly from Anthropic's &ldquo;Building Effective Agents&rdquo; — are the workhorses. They are not framework features; they are <em>shapes of ordinary Java code</em> that orchestrate LLM calls. You implement them with plain control flow, <code>CompletableFuture</code>s, and typed records. This is the level where the vast majority of FHLB's bounded, deterministic use cases live.</p>
+
+<div class="diagram">
+<div class="diagram-title">The Five Patterns by Control Shape</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Chain</span>
+      <div class="flow-desc">Sequential steps, each consuming the prior output. Decompose a hard task into ordered, individually-simpler LLM calls. Use a programmatic gate between steps to fail fast on bad intermediate output. Best when the sub-steps are known and ordered.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Parallelization</span>
+      <div class="flow-desc">Independent calls run concurrently (thread pool / <code>CompletableFuture</code>), then aggregate. Two sub-shapes: <em>sectioning</em> (split work into independent pieces) and <em>voting</em> (run the same prompt N times and take a majority). Best for throughput or diverse perspectives.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Routing</span>
+      <div class="flow-desc">A classifier call inspects the input and dispatches to one of several specialized handlers/prompts. Separates classification from handling so each prompt stays focused. Best when inputs fall into distinct categories needing different treatment.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Orchestrator-Workers</span>
+      <div class="flow-desc">A central LLM decomposes a task into subtasks <em>at runtime</em>, delegates each to a worker call, and synthesizes the results. The subtasks are not known in advance — that is the distinguishing feature versus Chain. First step onto genuine delegation (level 4).</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <span class="flow-actor">Evaluator-Optimizer</span>
+      <div class="flow-desc">A generator produces a draft; an evaluator scores it and returns feedback; the loop repeats until the evaluator passes or a bound is hit. A dual-LLM refinement loop — the most common <em>bounded</em> autonomy pattern. Best when quality criteria are expressible but hard to hit in one shot.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h3>The decision among them</h3>
+
+<p>The choice is mechanical once framed correctly:</p>
+
+<ul>
+  <li><strong>Are the steps known and ordered?</strong> → Chain.</li>
+  <li><strong>Are the steps known and independent?</strong> → Parallelization.</li>
+  <li><strong>Does the input fall into categories?</strong> → Routing.</li>
+  <li><strong>Are the steps unknown until you see the input?</strong> → Orchestrator-Workers.</li>
+  <li><strong>Is it one output that needs iterative refinement against a quality bar?</strong> → Evaluator-Optimizer.</li>
+</ul>
+
+<p>These compose freely. A real email-triage flow might <em>route</em> by message type, run a <em>chain</em> for the routine branch, and invoke an <em>evaluator-optimizer</em> loop for the branch that drafts a customer response. Each pattern is a few dozen lines of testable Java; the composition is your application's actual logic.</p>
+
+<div class="callout">
+<span class="callout-label">Where these live relative to Kestra</span>
+<p>These patterns govern control flow <em>within</em> a single agent invocation — the synchronous reasoning a service does to answer one request. They are not a replacement for Kestra, which owns <em>durable, cross-process</em> orchestration: retries across hours, human-in-the-loop waits, fan-out across many agents, and the audit trail of a long-running business process. The division of labor: Spring AI patterns own the in-process reasoning loop; Kestra owns the durable workflow that may invoke many such loops. Conflating the two — putting a multi-hour durable wait inside an in-process evaluator loop — is a recurring mistake.</p>
+</div>
+</section>
+<!-- ============ SECTION 6 ============ -->
+<section id="recursive">
+<span class="section-number">§ 06</span>
+<h2>Recursive Advisors and the Agentic Loop</h2>
+
+<p>Spring AI 1.1 added <strong>recursive advisors</strong> — advisors that can re-enter the advisor chain, enabling controlled iteration without hand-writing the loop in business code. This is the framework's sanctioned mechanism for bounded autonomy: the iteration lives in a reusable, observable advisor rather than scattered through orchestration.</p>
+
+<p>The pattern matters because it cleanly expresses three things that previously required custom loops:</p>
+
+<ul>
+  <li><strong>Output validation with retry</strong> — generate, validate, and if invalid, re-prompt with the validation feedback, up to a bound. The same shape as Evaluator-Optimizer, but packaged as middleware.</li>
+  <li><strong>LLM-as-a-Judge</strong> — a second model scores the first model's output against a rubric; the score gates acceptance or triggers another iteration. The basis for automated quality evaluation in production.</li>
+  <li><strong>Self-organizing memory and guardrails</strong> — the recursion point is where a guardrail can reject and force regeneration, or where context can be re-summarized mid-flow.</li>
+</ul>
+
+<div class="callout warn">
+<span class="callout-label">Recursion needs a hard bound</span>
+<p>Any recursive or iterative agentic construct must carry an explicit maximum-iteration cap and ideally a token/cost budget. A recursive advisor whose exit condition depends solely on an LLM judgment (&ldquo;is this good enough yet?&rdquo;) can loop indefinitely on adversarial or ambiguous input. The cap is not a fallback — it is a first-class part of the design. Emit an audit event when the cap is hit rather than the quality bar; a flow that repeatedly hits its cap is telling you the prompt or the criteria are wrong.</p>
+</div>
+
+<p>Recursive advisors are the natural ceiling of what Spring AI offers <em>before</em> you reach for a dedicated planning framework. They give you bounded, observable loops with retry and evaluation — which covers a large fraction of &ldquo;agentic&rdquo; requirements. What they do not give you is <em>planning</em>: the system still follows a path you wrote, just with iteration. The moment the requirement becomes &ldquo;assemble a novel sequence of steps based on what's available,&rdquo; you have crossed into Embabel's territory (§09).</p>
+</section>
+
+<!-- ============ SECTION 7 ============ -->
+<section id="agent-utils">
+<span class="section-number">§ 07</span>
+<h2>Higher-Order Patterns: Skills, Todo, Subagents</h2>
+
+<p>Beyond the core, the Spring AI community ships <code>spring-ai-agent-utils</code> (group <code>org.springaicommunity</code>) — a toolkit of higher-order agentic patterns inspired by Claude Code's design. These are <em>pre-1.0</em> and require Spring AI 2.0.0-M2+, so treat them as forward-looking rather than load-bearing today, but they signal where the platform is heading and several map directly onto FHLB's roadmap concerns.</p>
+
+<table>
+  <thead>
+    <tr><th>Pattern</th><th>What it provides</th><th>Architectural relevance</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Agent Skills</td><td>Modular folders of instructions, scripts, and resources an agent discovers and loads on demand; LLM-agnostic and Claude-Code-Skill compatible.</td><td>A governance unit for procedural memory — skills are version-controlled, reviewable capability bundles rather than hard-coded prompts.</td></tr>
+    <tr><td>Todo</td><td>Structured task planning that keeps a model's plan explicit, mitigating &ldquo;lost in the middle&rdquo; failure on long multi-step work.</td><td>Makes a long flow's intermediate plan inspectable and auditable — a lightweight middle ground before full GOAP planning.</td></tr>
+    <tr><td>Subagent</td><td>Delegation to a specialized agent with an isolated context window; the supervisor/worker shape as a first-class construct.</td><td>The Spring AI expression of the per-agent-microservice topology — bounded context per subagent maps onto bounded responsibility per service.</td></tr>
+    <tr><td>AskUserQuestion</td><td>Structured human-in-the-loop interaction inside an otherwise automated flow.</td><td>The sanctioned pause-for-approval point — pairs with the durable-wait capability that belongs in Kestra for anything cross-process.</td></tr>
+    <tr><td>Tool Search</td><td>Dynamic tool discovery so an agent selects from a large catalog without all tools in every prompt.</td><td>Directly relevant to MCP tool-catalog governance at the ~250-agent scale; keeps prompt size and tool-selection cost bounded.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+<span class="callout-label">Read these as direction, not dependency</span>
+<p>At pre-1.0 and tied to a milestone release of Spring AI 2.0, these belong in evaluation spikes, not in a service you intend to run in production this quarter. Their value now is conceptual: they name the patterns (skill loading, explicit todo planning, context-isolated subagents, dynamic tool search) that the platform will eventually standardize, which lets you build today's hand-wired equivalents in a shape that will migrate cleanly when the toolkit stabilizes.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 8 ============ -->
+<section id="limits">
+<span class="section-number">§ 08</span>
+<h2>Where Hand-Wired Orchestration Strains</h2>
+
+<p>The workflow patterns are excellent until a specific kind of complexity appears. Recognizing that inflection is the whole point of evaluating Embabel — adopting a planner before the inflection is over-engineering; adopting it after is a painful rewrite. Four signals, in order of increasing significance:</p>
+
+<h3>Signal 1 — Combinatorial branching</h3>
+<p>A routing workflow with three branches is clean. A routing workflow that routes, then each branch conditionally routes again, then those sub-branches recombine, is a nested <code>if/switch</code> structure that no longer fits on a screen and resists testing. When your hand-wired control flow starts to look like a state machine you are maintaining by hand, you are paying the cost of planning without its benefits.</p>
+
+<h3>Signal 2 — The &ldquo;recombine known steps in a new order&rdquo; requirement</h3>
+<p>This is the decisive one. If a new requirement is satisfiable by running existing steps in a sequence you did not previously code — and you find yourself adding yet another orchestration method to wire that specific path — you are hand-doing what a planner does automatically. A planner derives the path from the steps' input/output types; you should not be writing the path at all.</p>
+
+<h3>Signal 3 — Auditability of the decision, not just the outcome</h3>
+<p>When compliance asks not &ldquo;what did the agent do&rdquo; but &ldquo;why did it choose to do that, and what else could it have done,&rdquo; an LLM-driven orchestrator's answer (&ldquo;the model decided&rdquo;) is unsatisfying. A planner produces an explicit plan object — the considered actions, their preconditions, the chosen sequence — which is a far stronger audit artifact.</p>
+
+<h3>Signal 4 — Adaptive replanning mid-flow</h3>
+<p>When a step's result should change <em>which steps run next</em> — not via a coded branch you anticipated, but because the new information unlocks or forecloses actions — you need replanning. Hand-wiring every &ldquo;if this result, then reconsider everything&rdquo; case is intractable past a few steps.</p>
+
+<div class="principle">
+<p>The threshold is not scale and not LLM count. It is the moment the <em>path itself</em> becomes something you would rather derive than write. Below it, Spring AI's patterns are the lighter, cheaper, more testable choice. Above it, you are hand-maintaining a planner.</p>
+</div>
+
+<div class="callout warn">
+<span class="callout-label">Do not cross the threshold prematurely</span>
+<p>The failure mode in the other direction is real: adopting a planning framework for a flow that is genuinely a fixed three-step chain adds a dependency, a programming model, a maturity risk (Embabel is 0.3.x), and a cognitive tax on the team — to derive a path that was never in doubt. A linear &ldquo;classify → extract → route&rdquo; flow does not need GOAP. Most flows do not. The planner earns its place only when several of the signals above are present together.</p>
+</div>
+</section>
+<!-- ============ SECTION 9 ============ -->
+<section id="embabel-model">
+<span class="section-number">§ 09</span>
+<h2>The Embabel Model: Planning over Wiring</h2>
+
+<p>Embabel — created by Rod Johnson, Spring's founder, and built on top of Spring AI — inverts the orchestration question. Instead of writing the control-flow graph, you declare a set of <strong>actions</strong> (typed steps) and one or more <strong>goals</strong> (desired end states), and the framework's planner assembles a path from current state to goal. You describe the pieces; the system figures out the sequence.</p>
+
+<p>The programming model is deliberately Spring-shaped. Agents are Spring-managed beans annotated <code>@Agent</code>; steps are methods annotated <code>@Action</code>; the terminal step that completes a goal is marked <code>@AchievesGoal</code>. There is also an idiomatic Kotlin DSL (<code>agent { action { ... } }</code>) for programmatic composition, but the annotation model is the one a Spring team reads fluently on day one.</p>
+
+<pre data-lang="Java"><code>@Agent(description = "Triage an inbound member email to a resolution")
+public class EmailTriageAgent {
+
+    @Action
+    public Classification classify(InboundEmail email, OperationContext ctx) {
+        return ctx.ai().withDefaultLlm()
+            .createObject("Classify this email: " + email.body(),
+                          Classification.class);
+    }
+
+    @Action
+    public EnrichedCase enrich(Classification c, MemberRecord member) {
+        // ordinary code + tool calls; no LLM required for this step
+        return CaseEnricher.from(c, member);
+    }
+
+    @AchievesGoal(description = "Produce a routed, enriched triage result")
+    @Action
+    public TriageResult route(EnrichedCase enriched, OperationContext ctx) {
+        return ctx.ai().withDefaultLlm()
+            .createObject("Decide routing for: " + enriched, TriageResult.class);
+    }
+}</code></pre>
+
+<p>The critical thing to notice: <strong>there is no orchestration code.</strong> No method calls <code>classify</code> then <code>enrich</code> then <code>route</code>. Embabel reads the type signatures — <code>classify</code> produces a <code>Classification</code>, <code>enrich</code> consumes one and produces an <code>EnrichedCase</code>, <code>route</code> consumes that and achieves the goal — and derives the sequence. Add a new action that produces an <code>EnrichedCase</code> by a different route, and the planner can use it without any change to the existing flow.</p>
+
+<div class="callout">
+<span class="callout-label">The differentiator, precisely stated</span>
+<p>Most frameworks wire control flow one of two ways: let the LLM pick the next tool at runtime (sacrificing predictability), or define a state machine ahead of time (LangGraph's approach). Embabel does neither. It uses <strong>GOAP — Goal-Oriented Action Planning, a non-LLM pathfinding algorithm from game AI</strong> — to select the execution path over your strongly-typed methods. The decision of <em>what runs next</em> is made by a deterministic, inspectable algorithm, not by the model and not by a graph you hand-drew. The model is still used <em>inside</em> actions; it just no longer steers the flow.</p>
+</div>
+
+<p>This is also where the type system does real work. Because actions are connected by their Java/Kotlin types — records, not string keys — the plan is checked against compile-time guarantees that data flows correctly between steps. Johnson's framing is that Java's type system is an asset for agentic AI that Python cannot match: prompts and return types are strongly typed, tool-able, and survive refactoring.</p>
+</section>
+
+<!-- ============ SECTION 10 ============ -->
+<section id="goap">
+<span class="section-number">§ 10</span>
+<h2>GOAP, the Blackboard, and the OODA Loop</h2>
+
+<p>Understanding Embabel operationally means understanding three mechanisms: how it plans, where it keeps state, and how it loops.</p>
+
+<h3>GOAP planning with A*</h3>
+
+<p>After each action executes, Embabel replans. The cycle: examine current state, identify which actions' preconditions are now satisfiable, run an <strong>A* search</strong> over possible action sequences to find an optimal path to the goal, select the best plan by cost and success probability, execute the first action, then replan. Planning is not a one-time compile step — it happens continuously, which is what lets the system adapt when an action's result changes what is possible.</p>
+
+<div class="diagram">
+<div class="diagram-title">The Embabel Execution Cycle (OODA)</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Observe</span>
+      <div class="flow-desc">Read the current blackboard state and the results of the last action. What data objects now exist?</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Orient</span>
+      <div class="flow-desc">Determine what has changed since the last cycle and which actions' preconditions are now met.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Decide</span>
+      <div class="flow-desc">Run A* over available actions to (re)formulate the optimal plan toward the goal. The plan is an explicit object.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Act</span>
+      <div class="flow-desc">Execute the first action of the plan. Its output lands on the blackboard. Loop back to Observe.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h3>The blackboard</h3>
+
+<p>State lives in a <strong>blackboard</strong> — a shared workspace that accumulates the typed data objects produced by actions over the run. An action's preconditions are essentially &ldquo;these types are present on the blackboard&rdquo;; its effect is &ldquo;this type is now present.&rdquo; This is what makes planning tractable and inspectable: the planner reasons over the presence and absence of typed objects, and the blackboard <em>is</em> the audit record of what the agent knew at each step.</p>
+
+<div class="callout">
+<span class="callout-label">Why replanning is a safety feature</span>
+<p>The replan-after-every-action loop is not just flexibility — it is resilience. If an action fails or returns something unexpected, the planner reassesses from the actual current state and may find an alternative path to the goal that the original plan did not anticipate. A hand-wired chain would simply throw; the planner routes around. For a compliance-sensitive flow, the combination of &ldquo;explicit plan object&rdquo; plus &ldquo;blackboard state at each step&rdquo; produces an audit trail that answers not just <em>what happened</em> but <em>what the system considered and why it chose its path</em>.</p>
+</div>
+
+<p>If an agent gets stuck — no action's preconditions are satisfiable and the goal is unreached — an agent class implementing the <code>StuckHandler</code> interface can intervene, for example by adding data to the blackboard to unblock planning. This is the sanctioned escape hatch for partial or degraded inputs.</p>
+</section>
+<!-- ============ SECTION 11 ============ -->
+<section id="embabel-planners">
+<span class="section-number">§ 11</span>
+<h2>Planner Types and Composition</h2>
+
+<p>A common early objection — &ldquo;GOAP is elegant but my flow has a loop, and loops are awkward to express purely in preconditions&rdquo; — has been substantially answered by Embabel's recent work. The framework now supports multiple planner types that <em>compose</em>, which materially changes the adoption calculus from the 0.1.x era.</p>
+
+<table>
+  <thead>
+    <tr><th>Planner</th><th>Selects actions by</th><th>Best for</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>GOAP (default)</td><td>A* search over preconditions/effects toward a goal</td><td>Goal-directed flows where the path should be derived from available actions</td></tr>
+    <tr><td>State machine</td><td>Explicit states and transitions</td><td>Loops and stage-based flows that are naturally stateful (chatbots, multi-turn)</td></tr>
+    <tr><td>Utility AI</td><td>Dynamic utility scores per action — maximize overall utility</td><td>Open-ended exploration where there is no single goal to reach, just value to maximize</td></tr>
+  </tbody>
+</table>
+
+<p>The significant part is that these are not mutually exclusive. The programming model is identical across planner types, and they interoperate: an action run under the GOAP planner that returns a state type can hand control to the state machine, whose ultimate return passes back to GOAP — and each state defaults to GOAP planning internally. This is Embabel's claim to implement LangGraph's core idea (explicit stateful graphs) while keeping the planning advantages, and it removes the &ldquo;loops are hard in GOAP&rdquo; objection by letting the state machine own the loop and GOAP own the goal-seeking.</p>
+
+<h3>AgenticTool — the familiar supervisor pattern</h3>
+
+<p>For teams arriving from LangChain or Google ADK, Embabel ships <code>AgenticTool</code>: an LLM orchestrating sub-tools, mapping directly onto LangChain's supervisor-with-workers or ADK's coordinator pattern. This matters for adoption — it means Embabel is not an all-or-nothing bet on GOAP. You can use the familiar supervisor shape where it fits and the planner where it adds value, in the same application.</p>
+
+<div class="callout">
+<span class="callout-label">Module maturity is not uniform</span>
+<p>Embabel labels its modules <strong>stable</strong> (production-ready, breaking changes avoided), <strong>incubating</strong> (usable, may break in minor releases), or <strong>experimental</strong> (early, may break in any release). When evaluating, check the status of the specific modules a design depends on rather than treating &ldquo;Embabel 0.3.x&rdquo; as a single maturity level. The core annotation model and GOAP planner are the most settled; newer planner integrations and tooling are further left on the maturity scale.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 12 ============ -->
+<section id="relationship">
+<span class="section-number">§ 12</span>
+<h2>How Spring AI and Embabel Relate</h2>
+
+<p>The single most important fact for avoiding a false choice: <strong>Embabel is built on Spring AI, not instead of it.</strong> It is not a competitor to evaluate against Spring AI; it is a higher-level layer that consumes Spring AI's model abstraction underneath. The relationship is layered, and both layers are present in an Embabel application.</p>
+
+<div class="diagram">
+<div class="diagram-title">The Layering</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Embabel — Planning</span>
+      <div class="flow-desc">@Agent / @Action / @AchievesGoal, GOAP/state-machine/utility planners, blackboard, replanning. Decides <em>what runs next</em>.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Spring AI — Orchestration primitives</span>
+      <div class="flow-desc">ChatClient, advisors, tool calling, structured output. Embabel <code>Llm</code> beans wrap Spring AI <code>ChatModel</code> instances directly.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Spring AI — Model abstraction</span>
+      <div class="flow-desc">Provider-agnostic <code>ChatModel</code> / <code>EmbeddingModel</code>. Any provider with a Spring AI ChatModel is usable from Embabel.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">Transport</span>
+      <div class="flow-desc">LiteLLM proxy → NIM models on OpenShift. Unchanged whether you use Spring AI alone or Embabel on top.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<p>Johnson's own analogy is the cleanest: <strong>Spring AI sits at the level of the Servlet API; Embabel is more like Spring MVC.</strong> You <em>can</em> write a web application directly against servlets, and for a trivial endpoint that is fine. For anything with real structure, the higher-level framework expresses the intent more directly and tests more easily. The same relationship holds here. A fixed chain is a servlet; a goal-directed, replanning, multi-branch flow is what Spring MVC is for.</p>
+
+<div class="callout">
+<span class="callout-label">Practical consequence for the platform</span>
+<p>Because Embabel consumes Spring AI's <code>ChatModel</code>, the existing transport investment is preserved entirely: an Embabel <code>Llm</code> bean is created around a Spring AI <code>ChatModel</code>, so the LiteLLM-proxy-to-NIM path, model selection, and observability all carry over. Adopting Embabel for a specific agent does not fork the platform's model-access story. It adds a planning layer to <em>that agent</em> while leaving every other agent on plain Spring AI. The two coexist service-by-service.</p>
+</div>
+
+<p>This also dissolves the &ldquo;Spring AI vs Embabel&rdquo; framing into the right question: <em>per agent</em>, does this flow need a planner? Most will not, and run on Spring AI's patterns. A minority — the compliance-sensitive, multi-branch, replanning flows — will, and run on Embabel over the same Spring AI foundation.</p>
+</section>
+<!-- ============ SECTION 13 ============ -->
+<section id="deployment">
+<span class="section-number">§ 13</span>
+<h2>Agent Topology and Deployment</h2>
+
+<p>The framework choice interacts with the deployment topology. The platform's standing decision — one Spring Boot microservice per agent, breaking even around agent ten because the per-agent ceremony is templated platform investment rather than manual work — holds regardless of whether a given agent uses plain Spring AI or Embabel. But the control-flow choice changes what lives <em>inside</em> each service.</p>
+
+<h3>What a Spring-AI-only agent service contains</h3>
+<p>A <code>ChatClient</code> (or raw <code>ChatModel</code> loop), an advisor chain, a set of <code>@Tool</code> beans, and orchestration code expressing one or more of the five patterns. The control-flow graph is in your source, reviewable in a PR. Startup is fast; the dependency surface is small. This is the default and the bulk of the fleet.</p>
+
+<h3>What an Embabel agent service adds</h3>
+<p>The Embabel starter, <code>@Agent</code>-annotated beans whose <code>@Action</code> methods are scanned at startup into runtime metadata, and the planner. The control-flow graph is <em>not</em> in your source — it is derived at runtime from action signatures. This is the trade: you gain derived, adaptive paths and lose the ability to read the exact sequence from the code. The Spring-Boot-3.5.x constraint on Embabel currently means an Embabel service may lag the Spring Boot 4.x line that plain Spring AI services can adopt — a real version-skew consideration for a mixed fleet.</p>
+
+<div class="callout warn">
+<span class="callout-label">Version skew across the fleet</span>
+<p>Mixing Spring AI services on Spring Boot 4.x with Embabel services pinned to 3.5.x is workable but must be deliberate. Shared libraries (security, observability, identity propagation per the Identity document) need to support both lines, or the Embabel services need their own compatible versions. Track Embabel's Spring Boot 4 / Spring AI 2.0 support actively; the constraint is a moving target and may lift before a broad Embabel rollout. Until it does, treat Embabel adoption as scoped to specific high-value agents rather than a fleet-wide default.</p>
+</div>
+
+<h3>Identity and memory propagation are unchanged</h3>
+<p>Both layers run inside an ordinary Spring Boot service, so the OAuth2 on-behalf-of token propagation from the Identity document and the four-plane memory composition from the Memory document apply identically. An Embabel <code>@Action</code> that calls a tool propagates the caller's <code>Authentication</code> exactly as a Spring AI tool call does — the planner does not bypass the security or memory machinery, it sits above it. This is a direct benefit of Embabel embracing the Spring component model rather than replacing it: dependency injection, AOP, transaction management, and security all work as in any Spring application.</p>
+</section>
+
+<!-- ============ SECTION 14 ============ -->
+<section id="auditability">
+<span class="section-number">§ 14</span>
+<h2>Determinism, Auditability, and Cost</h2>
+
+<p>Three operational properties separate the approaches in ways that matter directly to a SOX-regulated platform. None is uniformly better; the right choice depends on which property a given flow most needs.</p>
+
+<h3>Determinism</h3>
+<p>No approach makes the <em>model</em> deterministic — that is inherent to LLMs. What varies is whether the <em>control flow</em> is deterministic. Fixed chains and routing are fully deterministic in structure. Embabel's planning is deterministic-<em>given-state</em>: the A* search over the same blackboard state and action set yields the same plan, so the path is reproducible and explainable even though the model outputs inside actions are not. An open tool-calling loop is non-deterministic in both structure and content — the worst case for reproducibility.</p>
+
+<h3>Auditability</h3>
+<p>This is where the planner's advantage is sharpest. A hand-wired workflow audits well at the <em>outcome</em> level (you logged each step) but poorly at the <em>decision</em> level for branches the model drove. Embabel produces an explicit plan object plus a blackboard history, so the audit answers &ldquo;what did the system consider, what were the preconditions, why this path&rdquo; — not just &ldquo;what ran.&rdquo; For the examination-tracking and email-triage flows where an auditor may challenge a routing decision, this is a material difference.</p>
+
+<div class="callout">
+<span class="callout-label">The audit artifact comparison</span>
+<p>For a SOX review, the difference is concrete. A Spring AI orchestrator's audit trail is a sequence of structured log events: <em>step ran, input, output</em>. An Embabel run additionally yields the plan that was formulated (the considered action sequence with preconditions) and the blackboard at each step (the typed state the decision was made against). The former proves <em>what happened</em>; the latter additionally documents <em>the reasoning structure</em> — closer to what an auditor actually wants to see for an automated decision.</p>
+</div>
+
+<h3>Cost and latency</h3>
+<p>More structure can mean more model calls. Evaluator-Optimizer loops, orchestrator decomposition, and replanning all add calls relative to a single shot. The lever Embabel offers here is real: because flows decompose into small, focused actions, each action can use a <em>smaller, cheaper model</em> sized to its specific sub-task, rather than one large model for the whole flow. Embabel encourages per-invocation model choice via its <code>PromptRunner</code> / role mechanism. The net cost can be lower than a monolithic prompt even with more calls — but only if you exploit the per-action model sizing rather than defaulting every action to the largest model.</p>
+
+<div class="principle">
+<p>Auditability is not the price of autonomy — at the planner level it is a product of it. The explicit plan is both the thing that makes the agent adaptive and the thing that makes it explainable. That coincidence is the strongest single argument for planning in a regulated environment.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 15 ============ -->
+<section id="decision">
+<span class="section-number">§ 15</span>
+<h2>A Decision Framework</h2>
+
+<p>Pulling the document into a single procedure. For any candidate agent, walk the questions in order and stop at the first that fits — the leftmost point on the autonomy spectrum that solves the problem.</p>
+
+<div class="diagram">
+<div class="diagram-title">Choosing the Control-Flow Approach</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <span class="flow-actor">One call?</span>
+      <div class="flow-desc">If the task is a single prompt-and-response (classify, extract, summarize), use <code>ChatClient</code> directly. No orchestration. Stop.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <span class="flow-actor">Known fixed path?</span>
+      <div class="flow-desc">If the steps and their order are known at design time, use the Chain / Parallelization / Routing patterns in plain Spring AI. This covers most bounded business processes. Stop.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <span class="flow-actor">Iterative refinement?</span>
+      <div class="flow-desc">If it is one output that must meet a quality bar, use Evaluator-Optimizer or a recursive advisor with a hard iteration cap. Still Spring AI. Stop.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <span class="flow-actor">Runtime decomposition?</span>
+      <div class="flow-desc">If subtasks are unknown until input arrives but the flow is otherwise simple, use Orchestrator-Workers. Reassess if the orchestration logic starts to sprawl.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <span class="flow-actor">Planning signals present?</span>
+      <div class="flow-desc">If two or more §08 signals hold — combinatorial branching, recombine-known-steps, decision-level audit, adaptive replanning — evaluate Embabel for <em>this</em> agent. Otherwise stay on Spring AI.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">6</div>
+    <div class="flow-content">
+      <span class="flow-actor">Durable / cross-process?</span>
+      <div class="flow-desc">If the flow spans hours, needs retries across failures, or human waits, that orchestration belongs in Kestra regardless of the in-process choice above.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<p>The framework is intentionally biased toward the left. The reason is the asymmetry of regret: starting on Spring AI patterns and later wrapping a planner around a flow is an additive change; starting on a planner for a flow that never needed one is a dependency and a maturity risk you carry for the life of the service. When genuinely uncertain, build the Spring AI version first — it is also the fastest way to learn whether the planning signals are real or imagined.</p>
+</section>
+<!-- ============ SECTION 16 ============ -->
+<section id="failure">
+<span class="section-number">§ 16</span>
+<h2>Failure Modes</h2>
+
+<p>The characteristic ways agentic control flow goes wrong. Most are not exotic — they are ordinary engineering failures wearing an AI costume.</p>
+
+<h3>The unbounded loop</h3>
+<p>Any loop whose exit depends on a model judgment can run forever on adversarial input. Every iterative construct — evaluator-optimizer, recursive advisor, planner replanning — needs a hard iteration cap and a cost budget, with an audit event emitted when the cap (rather than the success condition) is what stops it.</p>
+
+<h3>The string-typed boundary</h3>
+<p>Passing raw model text between steps instead of parsed, typed records. The flow appears to work in the demo and fails silently in production when the model phrases something differently. Every inter-step boundary should be a record produced by structured output, asserted on in tests.</p>
+
+<h3>Premature autonomy</h3>
+<p>Reaching for an orchestrator or a planner when a fixed chain would do. Symptoms: a control-flow design discussion that is longer than the flow would be to hand-write; a planner modeling a path that was never in doubt. The cost is paid in latency, dollars, and debuggability.</p>
+
+<h3>Premature framework lock-in</h3>
+<p>The inverse: hand-wiring a state machine in nested conditionals because &ldquo;we don't need a framework,&rdquo; until the conditionals are unmaintainable. The §08 signals exist to catch this before the rewrite is forced.</p>
+
+<h3>Planner mismodeling</h3>
+<p>An Embabel-specific failure: declaring action preconditions/effects (via types) such that no valid plan exists, or such that the planner picks a surprising path. Manifests as &ldquo;the agent won't start&rdquo; or &ldquo;the agent does something reasonable but not what I expected.&rdquo; The fix is the same discipline as good type design — and a <code>StuckHandler</code> for the partial-input cases.</p>
+
+<h3>Confusing in-process and durable orchestration</h3>
+<p>Putting a multi-hour wait or a human-approval step inside a synchronous in-process reasoning loop, where it blocks a thread and loses its state on restart. Durable, cross-process orchestration is Kestra's job; the in-process patterns assume they run to completion within one request.</p>
+
+<div class="callout warn">
+<span class="callout-label">The meta-failure</span>
+<p>Underlying most of the above is treating &ldquo;agent&rdquo; as a destination rather than a control-flow choice. Teams decide to &ldquo;build an agent&rdquo; and then reach for the most autonomous construct available, when the task was a three-step workflow all along. Start from the task's actual shape and pick the leftmost construct that fits — the autonomy is a cost to be justified, not a goal to be reached.</p>
+</div>
+</section>
+
+<!-- ============ SECTION 17 ============ -->
+<section id="patterns">
+<span class="section-number">§ 17</span>
+<h2>Patterns to Establish</h2>
+
+<p>The standing decisions this document argues for, collected for reference. These are platform conventions, not per-project choices.</p>
+
+<ol>
+  <li><strong>Default to workflows, not autonomy.</strong> The leftmost point on the autonomy spectrum that solves the problem is the correct one. Genuine autonomy is opt-in and justified, never the default.</li>
+  <li><strong>Spring AI's five patterns are the workhorse layer.</strong> Chain, Parallelization, Routing, Orchestrator-Workers, Evaluator-Optimizer — implemented as plain, testable Java orchestrating LLM calls. Most agents never need more.</li>
+  <li><strong>Type every boundary.</strong> Structured output between every step. Records, not strings. A boundary you cannot assert on in a test is a defect.</li>
+  <li><strong>Every loop is bounded.</strong> Hard iteration cap and cost budget on every iterative or recursive construct. Emit an audit event when the cap stops the loop.</li>
+  <li><strong>Cross-cutting concerns are advisors; the task is orchestration.</strong> Memory, retrieval, identity filtering, audit, guardrails attach as advisors. Keep that line clean.</li>
+  <li><strong>Embabel is a per-agent decision, evaluated against the §08 signals.</strong> Not a fleet default and not a competitor to Spring AI — a planning layer adopted for specific flows that show two or more planning signals together.</li>
+  <li><strong>Embabel runs on the existing Spring AI foundation.</strong> Its <code>Llm</code> beans wrap Spring AI <code>ChatModel</code> instances; the LiteLLM/NIM transport, identity propagation, and memory composition carry over unchanged.</li>
+  <li><strong>In-process control flow is not durable orchestration.</strong> The patterns here own the synchronous reasoning loop. Anything spanning processes, hours, retries, or human waits belongs in Kestra.</li>
+  <li><strong>Per-action model sizing.</strong> Decompose so each step can use the smallest model that suffices. Do not default every call to the largest model; the decomposition exists partly to let you avoid that.</li>
+  <li><strong>Track maturity explicitly.</strong> Embabel is 0.3.x with mixed module statuses; <code>spring-ai-agent-utils</code> is pre-1.0 on Spring AI 2.0 milestones. Pin versions, check module status per dependency, and keep these scoped to where their value is clear.</li>
+</ol>
+
+<div class="principle">
+<p>The architecture for agentic control flow is the architecture for any system that mixes deterministic code with a non-deterministic component: isolate the non-determinism, type its boundaries, bound its loops, and keep the decision of &ldquo;what runs next&rdquo; as explicit as the problem allows. The AI use case forces the discipline; the discipline is just good engineering.</p>
+</div>
+</section>
+<!-- ============ POC SECTION ============ -->
+<section id="poc" class="poc-section">
+<span class="section-number">§ 18</span>
+<h2>POC Injection Points</h2>
+
+<div class="poc-intro">
+<p>Each POC below is a self-contained scope exercising one concept from this document. The <strong>Claude Code prompt blocks</strong> are starting points — paste them into a Claude Code session, refine with environment-specific detail (NIM endpoint and model identifiers via the LiteLLM proxy, tenant identifiers, downstream service names), and iterate. POCs are ordered from the workflow layer to the planning layer; later POCs assume the foundational ones are understood. They deliberately do not re-derive memory or identity scaffolding — wire those in per the companion documents where noted.</p>
+</div>
+
+<!-- POC 1 -->
+<div class="poc-card">
+<div class="poc-id">POC 01</div>
+<div class="poc-title">Routing + Chain workflow with typed boundaries</div>
+<div class="poc-scope">Scope · Level 1–2 — Hand-wired workflow</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — Spring Boot 3.5+ / Spring AI 1.1.x. Chat model endpoint reachable (NIM via LiteLLM proxy).</div>
+
+<p>Demonstrates the two foundational patterns composed: classify an input, then run a fixed chain for the matched branch, with every inter-step boundary a typed record asserted in tests.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring Boot 3.5+ service using Spring AI 1.1.x that implements a routing-then-chain workflow for inbound member-email triage. Requirements:</p>
+<p>1. <code>POST /api/triage</code> accepts an <code>InboundEmail</code> record (<code>from</code>, <code>subject</code>, <code>body</code>).<br>
+2. <strong>Routing step</strong>: a classifier <code>ChatClient</code> call returns a typed <code>Classification</code> record (<code>category</code> enum: <code>BALANCE_INQUIRY</code> | <code>DISPUTE</code> | <code>GENERAL</code>, <code>confidence</code> double) via <code>.entity(Classification.class)</code>.<br>
+3. <strong>Chain step</strong>: for <code>DISPUTE</code>, run a three-call chain — extract dispute details → enrich with a stubbed account-lookup tool → draft a structured <code>DisputeCase</code> record. Each call's output is a typed record consumed by the next.<br>
+4. Insert a programmatic gate between chain steps: if extraction confidence &lt; 0.6, short-circuit to a <code>NEEDS_HUMAN</code> result rather than continuing.<br>
+5. All inter-step types are Java records; no raw strings cross a boundary.<br>
+6. Emit a structured audit event per step (step name, input hash, output summary, latency, token usage).<br>
+7. Tests: (a) a classification test asserting category for fixtured emails using a mocked <code>ChatModel</code> returning canned completions; (b) a chain test asserting the <code>DisputeCase</code> shape; (c) a gate test asserting the low-confidence short-circuit.</p>
+<p>Produce: <code>build.gradle</code>, <code>application.yml</code>, the record types, <code>TriageController.java</code>, <code>RoutingService.java</code>, <code>DisputeChain.java</code>, an <code>AuditEmitter</code>, and the three tests.</p>
+</div>
+</div>
+
+<!-- POC 2 -->
+<div class="poc-card">
+<div class="poc-id">POC 02</div>
+<div class="poc-title">Parallelization — sectioning and voting</div>
+<div class="poc-scope">Scope · Level 1 — Concurrent workflow</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 01 understood.</div>
+
+<p>Demonstrates both parallelization sub-shapes: splitting independent work across concurrent calls, and running one prompt N times for a majority vote.</p>
+
+<div class="prompt-injection">
+<p>Extend the POC 01 service with two parallelization endpoints. Requirements:</p>
+<p>1. <strong>Sectioning</strong>: <code>POST /api/analyze-document</code> takes a long document and runs three independent <code>ChatClient</code> calls concurrently via <code>CompletableFuture</code> on a bounded executor — one for summary, one for risk flags, one for required-action extraction — each returning a typed record. Aggregate into a <code>DocumentAnalysis</code> record.<br>
+2. <strong>Voting</strong>: <code>POST /api/classify-sensitive</code> runs the same classification prompt five times concurrently, parses each to a typed enum, and returns the majority verdict plus the vote distribution. Tie-break to the most conservative category.<br>
+3. The executor is a managed Spring bean with a fixed pool size and a sensible rejection policy; do not use the common ForkJoinPool.<br>
+4. Both endpoints carry a per-request timeout; on partial completion, return the sections that succeeded plus an explicit list of the ones that timed out.<br>
+5. Tests: (a) sectioning assembles all three sections; (b) voting returns the majority and distribution for a fixtured set of mocked responses; (c) a timeout test asserting graceful partial return.</p>
+<p>Produce: <code>ParallelAnalysisService.java</code>, <code>VotingClassifier.java</code>, executor configuration, the record types, and the three tests.</p>
+</div>
+</div>
+
+<!-- POC 3 -->
+<div class="poc-card">
+<div class="poc-id">POC 03</div>
+<div class="poc-title">Evaluator-Optimizer loop with a hard bound</div>
+<div class="poc-scope">Scope · Level 3 — Bounded autonomy</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 01 understood.</div>
+
+<p>Demonstrates the dual-LLM refinement loop and, critically, that it is bounded and audited — the loop stops on either the quality bar or the iteration cap, and reports which.</p>
+
+<div class="prompt-injection">
+<p>Build an evaluator-optimizer service that drafts a member-facing response and refines it against a rubric. Requirements:</p>
+<p>1. <strong>Generator</strong>: a <code>ChatClient</code> call produces a <code>Draft</code> record from a case summary.<br>
+2. <strong>Evaluator</strong>: a separate <code>ChatClient</code> call (different system prompt, optionally a different/smaller model) scores the draft against an explicit rubric and returns an <code>Evaluation</code> record (<code>passed</code> boolean, <code>score</code>, <code>feedback</code> list).<br>
+3. Loop: generate → evaluate → if not passed, regenerate with the feedback injected, up to <code>maxIterations=4</code> (configurable). <strong>The cap is mandatory.</strong><br>
+4. The result records: final draft, number of iterations, and whether termination was by <code>QUALITY_BAR</code> or <code>ITERATION_CAP</code>. Emit a distinct audit event for cap-termination.<br>
+5. Add a cost budget: track cumulative token usage across iterations and terminate early if a configured ceiling is exceeded, recording <code>BUDGET</code> as the termination reason.<br>
+6. Implement it twice: once as plain orchestration code, and once as a Spring AI <strong>recursive advisor</strong>. Document the trade-offs in a README.<br>
+7. Tests: (a) terminates on quality bar when the mocked evaluator passes on iteration 2; (b) terminates on cap when the evaluator never passes; (c) terminates on budget when token usage exceeds the ceiling.</p>
+<p>Produce: the record types, <code>EvaluatorOptimizerService.java</code> (orchestration version), <code>QualityRefinementAdvisor.java</code> (recursive-advisor version), configuration, README, and the three tests.</p>
+</div>
+</div>
+
+<!-- POC 4 -->
+<div class="poc-card">
+<div class="poc-id">POC 04</div>
+<div class="poc-title">Orchestrator-Workers with runtime decomposition</div>
+<div class="poc-scope">Scope · Level 4 — Delegated decomposition</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–02 understood.</div>
+
+<p>Demonstrates the first genuinely delegated pattern: an orchestrator LLM that decomposes a task into subtasks not known at design time, dispatches them to workers, and synthesizes the result — while keeping the decomposition itself inspectable.</p>
+
+<div class="prompt-injection">
+<p>Build an orchestrator-workers service for ad-hoc document-package review. Requirements:</p>
+<p>1. <strong>Orchestrator</strong>: a <code>ChatClient</code> call takes a review request and returns a typed <code>Plan</code> record — a list of <code>Subtask</code> records (<code>type</code>, <code>instruction</code>, <code>targetSection</code>) it has decided are needed. The set and number of subtasks are determined at runtime.<br>
+2. <strong>Workers</strong>: each subtask is dispatched to a worker <code>ChatClient</code> call (parallelized where independent) returning a typed <code>SubtaskResult</code>.<br>
+3. <strong>Synthesis</strong>: a final call combines the worker results into a <code>ReviewReport</code> record.<br>
+4. <strong>Inspectability</strong>: persist the orchestrator's <code>Plan</code> as a first-class audit artifact before any worker runs, so the decomposition decision is reviewable independently of the outcome.<br>
+5. Guardrails: cap the number of subtasks the orchestrator may create; reject and re-prompt once if it exceeds the cap; emit an audit event if it still does.<br>
+6. Tests: (a) a fixtured request produces the expected subtask set from a mocked orchestrator; (b) workers run and synthesis assembles the report; (c) the subtask cap is enforced.</p>
+<p>Produce: the record types, <code>OrchestratorService.java</code>, <code>WorkerService.java</code>, the plan-persistence audit component, configuration, and the three tests.</p>
+</div>
+</div>
+
+<!-- POC 5 -->
+<div class="poc-card">
+<div class="poc-id">POC 05</div>
+<div class="poc-title">First Embabel agent — GOAP from action types</div>
+<div class="poc-scope">Scope · Level 5 — Planned control flow</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01–04 understood. Spring Boot 3.5.x (Embabel constraint). Embabel agent starter.</div>
+
+<p>Demonstrates the core Embabel value: a multi-step flow with <em>no orchestration code</em>, where the planner derives the sequence from action input/output types and replans after each step.</p>
+
+<div class="prompt-injection">
+<p>Create a Spring Boot 3.5.x service using the Embabel agent starter that reimplements the POC 01 triage flow as a planned agent. Requirements:</p>
+<p>1. Add the appropriate Embabel starter; configure an Embabel <code>Llm</code> bean wrapping the existing Spring AI <code>ChatModel</code> (NIM via LiteLLM) so the transport is shared with the rest of the platform.<br>
+2. Define an <code>@Agent</code> class with <code>@Action</code> methods: <code>classify(InboundEmail) → Classification</code>, <code>enrich(Classification, MemberRecord) → EnrichedCase</code>, and an <code>@AchievesGoal</code> action <code>route(EnrichedCase) → TriageResult</code>. Use typed records throughout; <strong>write no method that calls these in sequence</strong> — the planner derives it.<br>
+3. Add a <em>second</em> path to <code>EnrichedCase</code> (e.g., <code>enrichFromCache(Classification) → EnrichedCase</code>) and demonstrate that the planner can use it without any change to <code>route</code> — show both plans in the logs.<br>
+4. Implement <code>StuckHandler</code> on the agent to handle the case where no <code>MemberRecord</code> is available, adding a placeholder to the blackboard so planning can proceed to a degraded result.<br>
+5. Enable Embabel's logging so the formulated plan and the blackboard state at each step are visible. Capture one full run's plan + blackboard trace into a file as the audit artifact.<br>
+6. Run it via the Embabel shell for interactive testing, and expose a <code>POST /api/triage-agent</code> endpoint for the focused (code-driven) execution mode.<br>
+7. Tests: (a) the happy path reaches the goal; (b) with the cache action present, assert a plan exists that uses it; (c) the stuck-handler path produces a degraded <code>TriageResult</code> when <code>MemberRecord</code> is absent.</p>
+<p>Produce: <code>build.gradle</code> (pinned Embabel + Spring Boot 3.5.x versions), <code>application.yml</code>, the <code>@Agent</code> class, the record types, the <code>Llm</code> configuration bean, the captured plan/blackboard audit artifact, and the three tests. In the README, contrast this implementation with POC 01 — lines of orchestration code, what each makes easy, and what each makes hard.</p>
+</div>
+</div>
+
+<!-- POC 6 -->
+<div class="poc-card">
+<div class="poc-id">POC 06</div>
+<div class="poc-title">Mixed planners — GOAP goal-seeking with a state-machine loop</div>
+<div class="poc-scope">Scope · Level 5 — Planner composition</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 05 complete.</div>
+
+<p>Demonstrates Embabel's planner composition: a state machine owns a refinement loop (the thing GOAP expresses awkwardly), while GOAP owns the overall goal-seeking, with control passing cleanly between them.</p>
+
+<div class="prompt-injection">
+<p>Extend the POC 05 agent with a refinement loop expressed via the state-machine planner. Requirements:</p>
+<p>1. Add an action that produces a <code>Draft</code> response for the <code>DISPUTE</code> branch, and a state-machine-driven refinement loop that re-drafts until an evaluator action returns <code>passed</code> or a cap is hit.<br>
+2. Structure it so the GOAP planner drives toward the overall goal, but the draft-refine cycle is a state with its own transitions; the loop's final output flows back to the GOAP plan.<br>
+3. Demonstrate, in logs, control passing from GOAP into the state machine and back.<br>
+4. Keep the iteration cap and a termination-reason record exactly as in POC 03 — the bound is mandatory regardless of planner.<br>
+5. Tests: (a) the loop terminates on the quality bar; (b) it terminates on the cap; (c) after the loop, the overall goal is still reached and the result incorporates the refined draft.</p>
+<p>Produce: the new actions and state definitions, updated agent class, configuration, a logged trace showing the GOAP↔state-machine handoff, and the three tests. In the README, note which real FHLB flows would justify this composition versus staying on plain Spring AI.</p>
+</div>
+</div>
+
+<!-- POC 7 -->
+<div class="poc-card">
+<div class="poc-id">POC 07</div>
+<div class="poc-title">Per-action model sizing and cost comparison</div>
+<div class="poc-scope">Scope · Cross-cutting — Cost engineering</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POC 05 complete.</div>
+
+<p>Demonstrates the cost lever decomposition unlocks: assigning a smaller, cheaper model to each action sized to its sub-task, and measuring the result against a monolithic single-prompt baseline.</p>
+
+<div class="prompt-injection">
+<p>Instrument the POC 05 Embabel agent for per-action model sizing and compare cost against a single-prompt baseline. Requirements:</p>
+<p>1. Configure named Embabel LLM roles mapping to two NIM models via LiteLLM: a small/fast model and a larger/more-capable model.<br>
+2. Assign each <code>@Action</code> a model role appropriate to its difficulty (e.g., classification → small; final routing decision → larger). Make the assignment explicit and documented.<br>
+3. Build a baseline service that performs the same triage in a single large-model prompt.<br>
+4. Run both over an identical fixture set of ~50 emails; record per-run token usage and estimated cost for each approach.<br>
+5. Produce a comparison report: total cost, per-stage cost for the decomposed version, quality agreement rate between the two approaches on the final routing decision.<br>
+6. Document the conditions under which decomposition wins on cost and where it does not (e.g., when every action genuinely needs the large model).</p>
+<p>Produce: the role configuration, the instrumented agent, the baseline service, a fixture corpus, the cost-comparison report generator, and the written analysis. This POC's deliverable is the analysis as much as the code.</p>
+</div>
+</div>
+
+<!-- POC 8 -->
+<div class="poc-card">
+<div class="poc-id">POC 08</div>
+<div class="poc-title">Decision-record harness — same flow, both approaches, audited</div>
+<div class="poc-scope">Scope · Composition — Architecture validation</div>
+<div class="poc-prereq"><strong>Prereqs</strong> — POCs 01, 03, 04, 05 complete.</div>
+
+<p>The capstone: implement one realistically-branching flow both as hand-wired Spring AI orchestration and as an Embabel planned agent, and produce the artifact that lets the team decide between them on evidence rather than preference.</p>
+
+<div class="prompt-injection">
+<p>Build a side-by-side harness for a single multi-branch flow — examination-document intake that classifies, conditionally extracts different fields per document type, conditionally enriches, and produces a routed result. Requirements:</p>
+<p>1. <strong>Implementation A</strong>: plain Spring AI using routing + chain + (for one branch) evaluator-optimizer, with all the §17 disciplines — typed boundaries, bounded loops, advisor-attached audit, identity propagation per the Identity document.<br>
+2. <strong>Implementation B</strong>: an Embabel <code>@Agent</code> with the same actions as typed methods, the planner deriving the path, blackboard + plan captured as the audit artifact.<br>
+3. Both share the same record types, the same tool implementations, and the same NIM/LiteLLM transport.<br>
+4. Run both over an identical fixture set covering every document type and the partial-input case.<br>
+5. Produce a <strong>decision record</strong> (markdown) comparing: lines of orchestration code, what each audit artifact proves (outcome-level vs decision-level), behavior on the partial-input case, cost, latency, added dependency/maturity risk, and the specific §08 signals (if any) this flow actually exhibits.<br>
+6. The decision record concludes with a recommendation for <em>this</em> flow and a generalizable rule for when the platform should reach for Embabel.<br>
+7. End-to-end tests for both implementations asserting identical outputs on the fixture set, plus the partial-input behavior for each.</p>
+<p>Produce: both complete implementations, the shared record/tool modules, the fixture corpus, the end-to-end tests, and the decision record. Document the assumed external dependencies (NIM endpoint, LiteLLM proxy, IdP for identity propagation, any tool backends) in the README.</p>
+</div>
+</div>
+
+</section>
+
+</main>
+
+</div>
+
+
+<footer class="site-footer">
+  <div class="container">
+    <div>© <span id="year"></span> my-learnings</div>
+    <div><a href="../">home</a></div>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>
