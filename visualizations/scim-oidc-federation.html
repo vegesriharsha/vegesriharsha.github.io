@@ -1,0 +1,2443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCIM + OIDC identity federation — Entra ID to GitHub EMU — my-learnings</title>
+  <meta name="description" content="A reference for federating Microsoft Entra ID into GitHub Enterprise Managed Users — SCIM provisioning, OIDC + PKCE, Conditional Access, the revocation gap, FIDO2, and where SAML / WS-Fed sit alongside." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/base.css" />
+  <link rel="stylesheet" href="../assets/css/components.css" />
+  <style>
+    /* ------------------------------------------------------------
+       Page-local patterns. Lift to components.css if reused.
+       ------------------------------------------------------------ */
+
+    /* Reference tables — glossary, dependency chain, grant types, failure modes */
+    .ref-table {
+      width: 100%; border-collapse: collapse; margin: 8px 0 4px;
+      font-size: 13px; color: var(--text);
+    }
+    .ref-table th {
+      text-align: left; font-family: var(--font-mono);
+      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); font-weight: 500;
+      padding: 10px 12px; border-bottom: 1px solid var(--border-2);
+    }
+    .ref-table td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+      vertical-align: top; line-height: 1.55;
+    }
+    .ref-table tr:hover td { background: var(--panel-2); }
+    .ref-table .mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-strong); white-space: nowrap; }
+    .ref-table .num  { font-family: var(--font-mono); font-size: 12px; color: var(--dim); text-align: right; width: 32px; }
+
+    /* Callouts — key / warn / info / good */
+    .callout {
+      padding: 12px 16px; border-radius: var(--radius);
+      font-size: 13px; line-height: 1.6; margin: 18px 0;
+      border-left: 3px solid var(--acc-1);
+      background: var(--acc-1-soft);
+    }
+    .callout.warn { border-color: var(--acc-5); background: var(--acc-5-soft); }
+    .callout.info { border-color: var(--acc-2); background: var(--acc-2-soft); }
+    .callout.good { border-color: var(--acc-3); background: var(--acc-3-soft); }
+    .callout strong { color: var(--text-strong); }
+
+    /* Badges used inside tables and stages */
+    .tag-badge {
+      display: inline-block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 10px;
+      background: var(--acc-1-soft); color: var(--acc-1);
+      border: 1px solid var(--acc-1);
+    }
+    .tag-badge.scim   { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+    .tag-badge.oidc   { background: var(--acc-3-soft); color: var(--acc-3); border-color: var(--acc-3); }
+    .tag-badge.both   { background: var(--acc-4-soft); color: var(--acc-4); border-color: var(--acc-4); }
+    .tag-badge.infra  { background: var(--panel-2); color: var(--dim); border-color: var(--border-2); }
+    .tag-badge.legacy { background: var(--panel-2); color: var(--dim); border-color: var(--border-2); }
+
+    /* Numbered flow steps — for the OIDC step list */
+    .flow-steps { counter-reset: step; padding: 0; list-style: none; margin: 16px 0; }
+    .flow-steps li {
+      counter-increment: step; position: relative;
+      padding: 12px 16px 12px 52px; margin-bottom: 6px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 13px; line-height: 1.55;
+    }
+    .flow-steps li::before {
+      content: counter(step); position: absolute;
+      left: 14px; top: 12px; width: 26px; height: 26px;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+      background: var(--acc-1-soft); color: var(--acc-1);
+    }
+    .flow-dir {
+      display: inline-block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.06em;
+      padding: 1px 7px; border-radius: 3px; margin-right: 6px;
+      background: var(--panel-2); color: var(--dim);
+      border: 1px solid var(--border-2);
+    }
+    .flow-dir.toidp    { background: var(--acc-2-soft); color: var(--acc-2); border-color: var(--acc-2); }
+    .flow-dir.toclient { background: var(--acc-1-soft); color: var(--acc-1); border-color: var(--acc-1); }
+    .flow-dir.server   { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+
+    /* Placeholder chip in stage toolbars for the 6 demos */
+    .stage-status {
+      font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--acc-4); padding: 3px 10px;
+      border: 1px dashed var(--acc-4); border-radius: 4px;
+    }
+    .stage-placeholder {
+      padding: 18px; background: var(--panel-3); border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; line-height: 1.7;
+      border: 1px dashed var(--border-2);
+    }
+    .stage-placeholder ol, .stage-placeholder ul { padding-left: 22px; margin: 8px 0; }
+    .stage-placeholder li { margin-bottom: 4px; }
+    .stage-placeholder code { font-family: var(--font-mono); font-size: 12px; color: var(--acc-1); }
+
+    /* Small inline-mono utility for token names etc. */
+    code { font-family: var(--font-mono); font-size: 0.92em; color: var(--acc-1); background: var(--acc-1-soft); padding: 1px 6px; border-radius: 3px; }
+
+    /* Role cards — for "GitHub EMU wears three hats" */
+    .role-card {
+      padding: 18px 20px; border-radius: var(--radius);
+      border: 1px solid var(--border); background: var(--panel);
+      margin-bottom: 12px;
+    }
+    .role-card.oidc   { border-left: 3px solid var(--acc-3); }
+    .role-card.scim   { border-left: 3px solid var(--acc-6); }
+    .role-card.dev    { border-left: 3px solid var(--dim); }
+    .role-card h4 { font-family: var(--font-display); font-weight: 700; font-size: 15px; color: var(--text-strong); margin-bottom: 6px; }
+    .role-card p  { font-size: 13px; color: var(--text-2); line-height: 1.6; margin: 0; }
+
+    /* ------------------------------------------------------------
+       PKCE handshake widget — sequence diagram via CSS grid.
+       Three columns: GitHub Client | Browser | Entra IdP.
+       Step rows reveal one at a time; verifier pin sticks to GH col.
+       ------------------------------------------------------------ */
+    .pkce-demo { display: flex; flex-direction: column; gap: 10px; }
+
+    .pkce-actors {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px; padding-bottom: 4px;
+    }
+    .pkce-actor {
+      text-align: center; padding: 12px 8px;
+      border-radius: var(--radius); background: var(--panel-2);
+      border: 1px solid var(--border-2);
+    }
+    .pkce-actor .name { font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--text-strong); }
+    .pkce-actor .role { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); margin-top: 4px; }
+    .pkce-actor.gh   { border-top: 2px solid var(--acc-3); }
+    .pkce-actor.brw  { border-top: 2px solid var(--acc-4); }
+    .pkce-actor.idp  { border-top: 2px solid var(--acc-1); }
+
+    .pkce-pin-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .pkce-verifier-pin {
+      grid-column: 1; display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-radius: var(--radius);
+      background: var(--acc-4-soft); border: 1px solid var(--acc-4);
+      font-family: var(--font-mono); font-size: 11px; color: var(--acc-4);
+      transition: opacity 400ms;
+    }
+    .pkce-verifier-pin strong { color: var(--acc-4); }
+
+    .pkce-steps { display: flex; flex-direction: column; gap: 6px; }
+    .pkce-step {
+      display: grid; grid-template-columns: 30px 1fr 1fr 1fr;
+      gap: 8px; align-items: center;
+      padding: 8px 10px;
+      border: 1px solid transparent; border-radius: var(--radius);
+      opacity: 0.22; transition: opacity 300ms, background 300ms, border-color 300ms;
+    }
+    .pkce-step.done   { opacity: 0.7; }
+    .pkce-step.active { opacity: 1; background: var(--panel-2); border-color: var(--acc-1); }
+    .pkce-step.attack.active { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .pkce-step.hidden { display: none; }
+
+    .pkce-letter {
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--panel); color: var(--dim);
+      border: 1px solid var(--border-2);
+    }
+    .pkce-step.done .pkce-letter   { background: var(--acc-1-soft); color: var(--acc-1); border-color: var(--acc-1); }
+    .pkce-step.active .pkce-letter { background: var(--acc-1); color: var(--text-strong); border-color: var(--acc-1); }
+    .pkce-step.attack .pkce-letter { background: var(--panel); color: var(--acc-5); border-color: var(--acc-5); }
+    .pkce-step.attack.active .pkce-letter { background: var(--acc-5); color: var(--text-strong); }
+
+    .pkce-cell {
+      padding: 8px 12px; border-radius: var(--radius);
+      font-size: 12px; line-height: 1.5;
+      background: var(--panel); border: 1px solid var(--border);
+      color: var(--text-2);
+    }
+    .pkce-cell.empty { background: transparent; border: 1px dashed transparent; }
+    .pkce-cell.op-gh  { border-left: 2px solid var(--acc-3); }
+    .pkce-cell.op-idp { border-left: 2px solid var(--acc-1); }
+    .pkce-cell.op-brw { border-left: 2px solid var(--acc-4); }
+    .pkce-cell.danger { border-left: 2px solid var(--acc-5); color: var(--acc-5); }
+    .pkce-cell.success { border-left: 2px solid var(--acc-3); color: var(--acc-3); }
+
+    .pkce-msg {
+      padding: 8px 12px; border-radius: var(--radius);
+      font-size: 12px; line-height: 1.5;
+      color: var(--text); background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .pkce-msg .arrow {
+      display: block; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .pkce-msg.via-brw .arrow  { color: var(--acc-4); }
+    .pkce-msg.vuln            { border-top: 2px solid var(--acc-5); }
+    .pkce-msg.vuln .arrow     { color: var(--acc-5); }
+    .pkce-msg.back-ch         { border-top: 2px solid var(--acc-6); background: var(--acc-6-soft); }
+    .pkce-msg.back-ch .arrow  { color: var(--acc-6); }
+    .pkce-msg.success         { border-top: 2px solid var(--acc-3); }
+    .pkce-msg.success .arrow  { color: var(--acc-3); }
+    .pkce-msg.span-3 { grid-column: span 3; }
+
+    .pkce-status {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 14px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .pkce-status .progress {
+      font-family: var(--font-mono); font-size: 11px; color: var(--dim);
+      letter-spacing: 0.08em;
+    }
+    .pkce-status .msg { color: var(--text-2); }
+    .pkce-status.attack-mode .msg { color: var(--acc-5); }
+
+    /* Attacker toggle button — accent when active */
+    .btn.attacker-on {
+      background: var(--acc-5); border-color: var(--acc-5); color: var(--text-strong);
+    }
+
+    @media (max-width: 720px) {
+      .pkce-actors { grid-template-columns: 1fr; }
+      .pkce-actor { text-align: left; }
+      .pkce-pin-row { grid-template-columns: 1fr; }
+      .pkce-step { grid-template-columns: 26px 1fr; }
+      .pkce-cell.empty { display: none; }
+      .pkce-msg.span-3 { grid-column: 2; }
+    }
+
+    /* ------------------------------------------------------------
+       OIDC flow widget — makes .flow-steps interactive.
+       Dim / active / done states; special back-channel treatment
+       on step 6 to echo PKCE's back-channel coloring.
+       ------------------------------------------------------------ */
+    .flow-steps.interactive li {
+      opacity: 0.28;
+      transition: opacity 300ms, border-color 300ms, background 300ms;
+    }
+    .flow-steps.interactive li::before {
+      transition: background 300ms, color 300ms;
+    }
+    .flow-steps.interactive li.done { opacity: 0.72; }
+    .flow-steps.interactive li.active {
+      opacity: 1;
+      border-color: var(--acc-1);
+      background: var(--panel-2);
+    }
+    .flow-steps.interactive li.active::before {
+      background: var(--acc-1);
+      color: var(--text-strong);
+    }
+    .flow-steps.interactive li.back-channel.active {
+      border-color: var(--acc-6);
+      background: var(--acc-6-soft);
+    }
+    .flow-steps.interactive li.back-channel.active::before {
+      background: var(--acc-6);
+    }
+
+    /* Back-channel badge — only visible once the step is reached */
+    .bc-badge {
+      display: none;
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 2px 7px; margin-left: 8px; border-radius: 3px;
+      background: var(--acc-6); color: var(--text-strong);
+      vertical-align: middle;
+    }
+    .flow-steps.interactive li.back-channel.active .bc-badge,
+    .flow-steps.interactive li.back-channel.done .bc-badge { display: inline-block; }
+
+    /* OIDC status bar — parallel to .pkce-status */
+    .oidc-status {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-top: 12px;
+      padding: 10px 14px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .oidc-status .progress {
+      font-family: var(--font-mono); font-size: 11px; color: var(--dim);
+      letter-spacing: 0.08em;
+    }
+    .oidc-status .msg { color: var(--text-2); }
+    .oidc-status.back-channel .msg { color: var(--acc-6); }
+
+    /* ------------------------------------------------------------
+       Conditional Access policy simulator — reactive widget.
+       Signals (segmented controls) feed an evaluator that updates
+       the decision panel and a per-policy log. Strictest wins.
+       ------------------------------------------------------------ */
+    .ca-signal { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .ca-signal-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .ca-segment {
+      display: flex; gap: 2px; padding: 3px;
+      background: var(--panel-2); border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .ca-segment button {
+      flex: 1; padding: 7px 8px;
+      background: transparent; border: none; border-radius: calc(var(--radius) - 3px);
+      color: var(--text-2); font-size: 12px; font-family: inherit;
+      cursor: pointer;
+      transition: background 200ms, color 200ms;
+    }
+    .ca-segment button:hover { color: var(--text-strong); }
+    .ca-segment button.active {
+      background: var(--acc-1); color: var(--text-strong);
+    }
+
+    .ca-decision {
+      padding: 22px 20px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      text-align: center;
+      transition: background 300ms, border-color 300ms;
+    }
+    .ca-decision .label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 10px;
+    }
+    .ca-decision .result {
+      font-family: var(--font-display); font-size: 20px;
+      font-weight: 800; color: var(--text-strong);
+      margin-bottom: 10px; letter-spacing: 0.02em;
+      transition: color 300ms;
+    }
+    .ca-decision .reason {
+      font-size: 12px; color: var(--text-2);
+      line-height: 1.55;
+    }
+    .ca-decision.allow  { background: var(--acc-3-soft); border-color: var(--acc-3); }
+    .ca-decision.allow  .result { color: var(--acc-3); }
+    .ca-decision.mfa    { background: var(--acc-2-soft); border-color: var(--acc-2); }
+    .ca-decision.mfa    .result { color: var(--acc-2); }
+    .ca-decision.stepup { background: var(--acc-4-soft); border-color: var(--acc-4); }
+    .ca-decision.stepup .result { color: var(--acc-4); }
+    .ca-decision.device { background: var(--acc-4-soft); border-color: var(--acc-4); }
+    .ca-decision.device .result { color: var(--acc-4); }
+    .ca-decision.block  { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .ca-decision.block  .result { color: var(--acc-5); }
+
+    .ca-section-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 12px;
+    }
+
+    .ca-policies { display: flex; flex-direction: column; gap: 6px; }
+    .ca-policy {
+      display: grid; grid-template-columns: 1fr auto;
+      gap: 12px; align-items: center;
+      padding: 10px 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      opacity: 0.45;
+      transition: opacity 250ms, border-color 250ms, box-shadow 250ms, background 250ms;
+    }
+    .ca-policy.fires { opacity: 1; }
+    .ca-policy.fires.winner {
+      background: var(--panel-2);
+      border-color: var(--acc-1);
+      box-shadow: 0 0 0 1px var(--acc-1);
+    }
+    .ca-policy.fires.winner.blocks {
+      border-color: var(--acc-5);
+      box-shadow: 0 0 0 1px var(--acc-5);
+    }
+    .ca-policy .name {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--text-strong);
+    }
+    .ca-policy .desc { font-size: 11px; color: var(--dim); margin-top: 2px; line-height: 1.45; }
+    .ca-policy .outcome {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 4px 10px; border-radius: 3px;
+      background: var(--panel-2); color: var(--dim);
+      white-space: nowrap;
+      transition: background 250ms, color 250ms;
+    }
+    .ca-policy.fires .outcome { background: var(--acc-1-soft); color: var(--acc-1); }
+    .ca-policy.fires.blocks .outcome { background: var(--acc-5-soft); color: var(--acc-5); }
+    .ca-policy.fires.winner .outcome { background: var(--acc-1); color: var(--text-strong); }
+    .ca-policy.fires.winner.blocks .outcome { background: var(--acc-5); color: var(--text-strong); }
+
+    @media (max-width: 720px) {
+      .ca-policy { grid-template-columns: 1fr; }
+      .ca-policy .outcome { justify-self: start; }
+    }
+
+    /* ------------------------------------------------------------
+       Termination timeline — visualizes the revocation gap.
+       Horizontal timeline 0..120 min, 4 token bars at proportional
+       lifetimes, event markers + a red "gap" strip injected by JS.
+       ------------------------------------------------------------ */
+    .term-demo { display: flex; flex-direction: column; gap: 14px; }
+
+    .term-timeline {
+      padding: 16px 16px 20px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .term-axis {
+      position: relative;
+      height: 18px;
+      margin-left: 120px; margin-right: 70px; margin-bottom: 10px;
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--dim);
+    }
+    .term-axis span {
+      position: absolute; top: 0;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .term-axis span:first-child { transform: translateX(0); }
+    .term-axis span:last-child  { transform: translateX(-100%); }
+
+    .term-body {
+      display: grid;
+      grid-template-columns: 110px 1fr 60px;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .term-labels, .term-metas {
+      display: flex; flex-direction: column;
+      justify-content: space-around;
+      gap: 6px;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--dim);
+    }
+    .term-metas { text-align: right; }
+
+    .term-bars {
+      position: relative;
+      padding-top: 28px; /* room for event labels */
+    }
+    .bar-row {
+      height: 18px; margin-bottom: 6px;
+      background: var(--panel-2);
+      border-radius: 3px;
+      position: relative;
+      overflow: visible;
+    }
+    .bar-row:last-of-type { margin-bottom: 0; }
+    .bar {
+      position: absolute;
+      left: 0; top: 0; height: 100%;
+      border-radius: 3px;
+      transition: width 500ms ease-out;
+    }
+    .bar.id-token      { background: var(--acc-2); }
+    .bar.access-token  { background: var(--acc-2); }
+    .bar.refresh-token {
+      width: 100%;
+      background: linear-gradient(90deg, var(--acc-4) 0%, var(--acc-4) 88%, transparent 100%);
+    }
+    .bar.session       { background: var(--acc-2); }
+
+    /* Events overlay — sits inside .term-bars (relative parent) */
+    .term-event {
+      position: absolute;
+      top: 22px; bottom: 0;
+      width: 2px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 300ms;
+    }
+    .term-event.visible { opacity: 1; }
+    .term-event .ev-label {
+      position: absolute;
+      top: -22px;
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      padding: 1px 5px; border-radius: 3px;
+      background: var(--panel-2);
+    }
+    .term-event .ev-label.right { left: 5px; }
+    .term-event .ev-label.left  { right: 5px; }
+    .term-event .ev-label.below { top: 0; }
+
+    .term-event.term     { background: var(--acc-5); }
+    .term-event.term .ev-label { color: var(--acc-5); border: 1px solid var(--acc-5); }
+    .term-event.scim     { background: var(--acc-1); }
+    .term-event.scim .ev-label { color: var(--acc-1); border: 1px solid var(--acc-1); }
+    .term-event.cae      { background: var(--acc-3); }
+    .term-event.cae .ev-label { color: var(--acc-3); border: 1px solid var(--acc-3); }
+
+    /* Revocation gap strip — red highlight from termination to session end */
+    .term-gap {
+      position: absolute;
+      top: 22px; bottom: 0;
+      background: var(--acc-5-soft);
+      border-left: 2px dashed var(--acc-5);
+      border-right: 2px dashed var(--acc-5);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 300ms, left 400ms ease-out, width 400ms ease-out;
+    }
+    .term-gap.visible { opacity: 1; }
+
+    .term-status {
+      padding: 14px 18px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      font-size: 13px; line-height: 1.6;
+      transition: background 300ms, border-color 300ms;
+    }
+    .term-status.bad  { background: var(--acc-5-soft); border-color: var(--acc-5); }
+    .term-status.good { background: var(--acc-3-soft); border-color: var(--acc-3); }
+    .term-status .headline {
+      font-family: var(--font-display); font-weight: 700; font-size: 16px;
+      margin-bottom: 4px;
+      color: var(--text-strong);
+      transition: color 300ms;
+    }
+    .term-status.bad .headline  { color: var(--acc-5); }
+    .term-status.good .headline { color: var(--acc-3); }
+    .term-status .detail { color: var(--text-2); }
+
+    .btn.cae-on { background: var(--acc-3); border-color: var(--acc-3); color: var(--text-strong); }
+
+    @media (max-width: 720px) {
+      .term-body { grid-template-columns: 70px 1fr 50px; gap: 6px; }
+      .term-axis { margin-left: 80px; margin-right: 60px; font-size: 9px; }
+      .term-labels, .term-metas { font-size: 10px; }
+      .term-event .ev-label { font-size: 9px; }
+    }
+
+    /* ------------------------------------------------------------
+       SCIM lifecycle widget — fleet-cell grid driven by a sim clock.
+       Uses the site's .fleet/.cell pattern. Three event types drive
+       three cell-state classes (checking/changing/fail). Queue drains
+       on every sync cycle (every 40 simulated minutes).
+       ------------------------------------------------------------ */
+    .scim-demo { display: flex; flex-direction: column; gap: 12px; }
+
+    .scim-meter {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .scim-meter .m-cell {
+      padding: 10px 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: background 250ms, border-color 250ms;
+    }
+    .scim-meter.syncing .m-cell {
+      background: var(--acc-1-soft); border-color: var(--acc-1);
+    }
+    .scim-meter .m-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .scim-meter .m-value {
+      font-family: var(--font-display); font-size: 17px;
+      font-weight: 700; color: var(--text-strong);
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .scim-queue-row {
+      padding: 10px 14px;
+      background: var(--panel); border: 1px dashed var(--border-2);
+      border-radius: var(--radius);
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      min-height: 38px;
+    }
+    .scim-queue-row .queue-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+    .scim-queue-row .queue-content {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--dim);
+    }
+    .scim-qchip {
+      display: inline-flex; align-items: center;
+      padding: 3px 8px; border-radius: 3px;
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.04em;
+      border: 1px solid;
+    }
+    .scim-qchip.post   { background: var(--acc-4-soft); color: var(--acc-4); border-color: var(--acc-4); }
+    .scim-qchip.patch  { background: var(--acc-6-soft); color: var(--acc-6); border-color: var(--acc-6); }
+    .scim-qchip.delete { background: var(--acc-5-soft); color: var(--acc-5); border-color: var(--acc-5); }
+
+    .scim-log {
+      padding: 12px 16px;
+      background: var(--panel-3); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 11px;
+      line-height: 1.7;
+      min-height: 90px;
+      max-height: 160px; overflow-y: auto;
+    }
+    .scim-log .log-entry {
+      display: grid;
+      grid-template-columns: 60px 70px 1fr auto;
+      gap: 10px;
+      padding: 2px 0;
+      color: var(--text);
+    }
+    .scim-log .log-entry .time { color: var(--dim); }
+    .scim-log .log-entry .method { font-weight: 600; }
+    .scim-log .log-entry.post   .method { color: var(--acc-4); }
+    .scim-log .log-entry.patch  .method { color: var(--acc-6); }
+    .scim-log .log-entry.delete .method { color: var(--acc-5); }
+    .scim-log .log-entry .delay { color: var(--dim); font-size: 10px; white-space: nowrap; }
+    .scim-log .log-empty { color: var(--dim); font-style: italic; }
+
+    /* fleet pulse when sync drains the queue */
+    .fleet.sync-firing { box-shadow: 0 0 0 2px var(--acc-1); transition: box-shadow 250ms; }
+
+    @media (max-width: 720px) {
+      .scim-meter { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .scim-meter .m-cell { padding: 8px 10px; }
+      .scim-meter .m-value { font-size: 14px; }
+      .scim-log .log-entry { grid-template-columns: 1fr; gap: 2px; }
+    }
+
+    /* ------------------------------------------------------------
+       Phishing simulator — side-by-side comparison.
+       Two columns (Password / FIDO2), one scenario toggle. URL bars
+       and column state classes carry the "danger" signal; outcome
+       panels show what actually happens for each method.
+       ------------------------------------------------------------ */
+    .phish-controls {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 4px; flex-wrap: wrap;
+    }
+    .phish-controls .label {
+      font-family: var(--font-mono); font-size: 11px;
+      letter-spacing: 0.08em; color: var(--dim);
+    }
+
+    .phish-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .phish-col {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 14px; border-radius: var(--radius);
+      background: var(--panel-2); border: 1px solid var(--border-2);
+    }
+    .phish-method {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim);
+    }
+
+    .phish-browser {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 12px;
+      transition: background 250ms, border-color 250ms;
+    }
+    .phish-browser .phish-icon { display: inline-flex; flex-shrink: 0; color: var(--acc-3); }
+    .phish-browser .ico-bad { display: none; }
+    .phish-browser .domain {
+      color: var(--text);
+      flex: 1;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      transition: color 250ms;
+    }
+    .phish-col.phishing .phish-browser {
+      background: var(--acc-5-soft); border-color: var(--acc-5);
+    }
+    .phish-col.phishing .phish-browser .phish-icon { color: var(--acc-5); }
+    .phish-col.phishing .phish-browser .ico-good { display: none; }
+    .phish-col.phishing .phish-browser .ico-bad  { display: inline-block; }
+    .phish-col.phishing .phish-browser .domain { color: var(--acc-5); }
+
+    .phish-form, .phish-prompt {
+      padding: 16px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .phish-form-row { display: flex; flex-direction: column; gap: 4px; }
+    .phish-form-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim);
+    }
+    .phish-form-input {
+      font-family: var(--font-mono); font-size: 13px;
+      padding: 7px 10px;
+      background: var(--panel-2); border: 1px solid var(--border-2);
+      border-radius: 3px; color: var(--text);
+    }
+    .phish-prompt { text-align: center; align-items: center; padding: 22px 16px; }
+    .phish-key-icon { color: var(--acc-3); margin-bottom: 4px; }
+    .phish-col.phishing .phish-key-icon { color: var(--acc-5); transition: color 250ms; }
+    .phish-prompt-text { font-size: 13px; color: var(--text-2); }
+
+    .phish-submit {
+      margin-top: 4px; padding: 8px 14px;
+      background: var(--acc-1); color: var(--text-strong);
+      border: none; border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 12px;
+      letter-spacing: 0.04em; cursor: pointer;
+      transition: background 200ms;
+    }
+    .phish-submit:hover:not(:disabled) { filter: brightness(1.1); }
+    .phish-submit:disabled {
+      background: var(--panel-2); color: var(--dim);
+      cursor: default;
+    }
+
+    .phish-outcome {
+      padding: 14px 16px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
+      transition: background 300ms, border-color 300ms;
+    }
+    .phish-outcome .o-label {
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--dim); margin-bottom: 4px;
+    }
+    .phish-outcome .o-text {
+      font-size: 12px; color: var(--text-2); line-height: 1.55;
+      transition: color 300ms;
+    }
+    .phish-outcome.success {
+      background: var(--acc-3-soft); border-color: var(--acc-3);
+    }
+    .phish-outcome.success .o-text { color: var(--acc-3); }
+    .phish-outcome.failure {
+      background: var(--acc-5-soft); border-color: var(--acc-5);
+    }
+    .phish-outcome.failure .o-text { color: var(--acc-5); }
+
+    @media (max-width: 720px) {
+      .phish-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../" style="text-decoration:none">
+        <div class="logo-top">my &middot; learnings</div>
+        <div class="logo-main">notes <span>&amp;</span> viz</div>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../">Home</a>
+        <a href="../#posts">Notes</a>
+        <a href="../#viz" class="active">Visualizations</a>
+        <a href="../about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============== HERO ============== -->
+    <section class="hero">
+      <div class="container">
+        <h1>SCIM + OIDC <span>identity federation</span></h1>
+        <p>
+          A complete reference for federating Microsoft Entra ID into GitHub Enterprise Managed Users.
+          Two protocols, three actors, one set of edge cases &mdash; SCIM creates the account,
+          OIDC authenticates the human, and the gap between them is where every bad incident lives.
+        </p>
+        <div class="pills" style="margin-top: 18px;">
+          <span class="pill">OIDC</span>
+          <span class="pill teal">SCIM</span>
+          <span class="pill">PKCE</span>
+          <span class="pill teal">FIDO2</span>
+          <span class="pill">Conditional Access</span>
+          <span class="pill teal">SAML / WS-Fed</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== GLOSSARY ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">vocabulary first</span>
+        <h2>Acronym glossary</h2>
+        <p class="lead">The space is acronym-soup. Anchor these once and the rest of the page reads cleanly.</p>
+
+        <table class="ref-table">
+          <thead><tr><th>Acronym</th><th>Full name</th><th>Role in this architecture</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">SSO</td><td>Single Sign-On</td><td>The <em>goal</em>, not a protocol. Authenticate once, access many apps.</td></tr>
+            <tr><td class="mono">OAuth 2.0</td><td>Open Authorization 2.0</td><td>Authorization framework. Provides Access Tokens with scopes. Does <strong>not</strong> provide identity by itself.</td></tr>
+            <tr><td class="mono">OIDC</td><td>OpenID Connect</td><td>Authentication layer on top of OAuth 2.0. Adds ID Token (JWT). The <code>openid</code> scope is the trigger.</td></tr>
+            <tr><td class="mono">SAML 2.0</td><td>Security Assertion Markup Language 2.0</td><td>Independent XML-based federated auth protocol. Same goal as OIDC, different mechanics.</td></tr>
+            <tr><td class="mono">WS-Fed</td><td>Web Services Federation</td><td>Microsoft's pre-SAML federated auth protocol. Wraps SAML <em>tokens</em> in its own wire protocol. Common in legacy ADFS / SharePoint. <strong>Not</strong> in the Entra &rarr; GitHub path; included for context.</td></tr>
+            <tr><td class="mono">SCIM</td><td>System for Cross-domain Identity Management</td><td>User and group provisioning via REST API. Handles lifecycle, not authentication.</td></tr>
+            <tr><td class="mono">IdP</td><td>Identity Provider</td><td>Entra ID &mdash; acts as both OAuth 2.0 AS and OIDC Provider.</td></tr>
+            <tr><td class="mono">SP</td><td>Service Provider</td><td>GitHub EMU &mdash; acts as OAuth 2.0 Client during OIDC login.</td></tr>
+            <tr><td class="mono">EMU</td><td>Enterprise Managed Users</td><td>GitHub mode where all accounts are IdP-controlled.</td></tr>
+            <tr><td class="mono">JWT</td><td>JSON Web Token</td><td>Compact, signed token format for ID Tokens and Access Tokens.</td></tr>
+            <tr><td class="mono">JWK / JWKS</td><td>JSON Web Key / Key Set</td><td>Public keys for token signature verification.</td></tr>
+            <tr><td class="mono">PAT</td><td>Personal Access Token</td><td>GitHub-issued token authorizing SCIM. Completely separate from OIDC tokens.</td></tr>
+            <tr><td class="mono">MFA</td><td>Multi-Factor Authentication</td><td>Additional factors at the IdP during login.</td></tr>
+            <tr><td class="mono">AuthN</td><td>Authentication</td><td>"Who are you?" Proving identity. OIDC / SAML / WS-Fed handle AuthN.</td></tr>
+            <tr><td class="mono">AuthZ</td><td>Authorization</td><td>"What can you do?" Permissions. OAuth 2.0 handles AuthZ.</td></tr>
+            <tr><td class="mono">PKCE</td><td>Proof Key for Code Exchange</td><td>Security extension to the Authorization Code flow. Prevents auth-code interception. Now mandatory.</td></tr>
+            <tr><td class="mono">FIDO2</td><td>Fast Identity Online 2</td><td>Passwordless auth standard. WebAuthn (browser) + CTAP2 (device). Phishing-resistant.</td></tr>
+            <tr><td class="mono">WebAuthn</td><td>Web Authentication (W3C)</td><td>Browser API (<code>navigator.credentials</code>) for FIDO2.</td></tr>
+            <tr><td class="mono">CTAP2</td><td>Client to Authenticator Protocol 2</td><td>Communication between browser and authenticator device (USB / BT / NFC).</td></tr>
+            <tr><td class="mono">Passkey</td><td>Passkey (industry term)</td><td>Consumer-friendly name for synced WebAuthn credentials (iCloud, Google, Microsoft).</td></tr>
+            <tr><td class="mono">CAE</td><td>Continuous Access Evaluation</td><td>Entra feature that revokes active sessions in near-real-time when conditions change.</td></tr>
+            <tr><td class="mono">CA</td><td>Conditional Access</td><td>Entra policy engine between authentication and token issuance. Evaluates device, location, risk.</td></tr>
+            <tr><td class="mono">SLO</td><td>Single Logout</td><td>Logging out of one app triggers logout everywhere. Fragile in practice.</td></tr>
+            <tr><td class="mono">JIT</td><td>Just-In-Time provisioning</td><td>Accounts created at first login. <strong>Not supported</strong> by GitHub EMU.</td></tr>
+            <tr><td class="mono">AS / RS</td><td>Authorization Server / Resource Server</td><td>OAuth 2.0 roles &mdash; Entra ID / GitHub API.</td></tr>
+            <tr><td class="mono">RBAC</td><td>Role-Based Access Control</td><td>Entra groups map to GitHub teams via SCIM.</td></tr>
+            <tr><td class="mono">TLS</td><td>Transport Layer Security</td><td>Encryption (HTTPS) for all communications.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== PROTOCOL FAMILY (incl. WS-Fed) ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the protocol family</span>
+        <h2>OIDC, SAML, WS-Fed &mdash; three paths to the same destination</h2>
+        <p class="lead">SSO is the goal. OAuth 2.0 is the authorization plumbing. OIDC, SAML, and WS-Fed are three federated-authentication protocols that achieve the same thing in different decades.</p>
+
+        <div class="grid grid-3" style="margin-top: 20px;">
+          <div class="card no-hover">
+            <h3 class="card-title">OIDC</h3>
+            <p>JSON / JWT. Built on OAuth 2.0 &mdash; the <code>openid</code> scope is the switch. Server-to-server back-channel for token exchange. The modern default; what we use here.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge oidc">current</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">SAML 2.0</h3>
+            <p>XML. Everything passes through the browser (POST or redirect bindings). Wide enterprise install base &mdash; still common for older SaaS. Same goal as OIDC, different wire format.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge oidc">current</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">WS-Federation</h3>
+            <p>Microsoft's pre-SAML federation protocol. Carries SAML <em>tokens</em> over its own WS-Trust SOAP-flavoured wire format. Lives in legacy ADFS / SharePoint / older .NET. Maintenance mode.</p>
+            <div class="card-meta" style="margin-top: 10px;"><span class="tag-badge legacy">legacy</span></div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Key mental model:</strong> OIDC is a <em>usage mode</em> of OAuth 2.0, activated by <code>openid</code> in the scope. Same pipes, same endpoints &mdash; the scope is the switch. SAML and WS-Fed are independent, parallel protocols built around XML tokens; WS-Fed reuses the SAML token format but with Microsoft-specific message wrapping.
+        </div>
+
+        <div class="callout info">
+          <strong>Why mention WS-Fed at all?</strong> It is <strong>not</strong> part of the Entra ID &rarr; GitHub EMU path &mdash; that pipeline is pure OIDC + SCIM. WS-Fed is included here for conceptual completeness: if you ever inherit an older Microsoft estate (ADFS in front of SharePoint, Dynamics, or older internal apps), you will see it. Entra ID still speaks it as a relying-party trust, but new federation should be OIDC or SAML.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== HOW THE PIECES FIT ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">how the pieces fit</span>
+        <h2>Two protocols, three actors, four OAuth roles</h2>
+        <p class="lead">OIDC handles <strong>authentication</strong> (who?). SCIM handles <strong>provisioning</strong> (should they exist?). OIDC flows through the browser; SCIM is server-to-server. Both must work for the system to work.</p>
+
+        <div class="panel-pair" style="margin-top: 22px;">
+          <div class="panel tinted-purple">
+            <h3 style="font-size:16px;margin-bottom:10px;">The four OAuth 2.0 roles</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>Resource Owner</strong> = the user (the human logging in)</li>
+              <li><strong>Client</strong> = GitHub EMU (initiates the auth request)</li>
+              <li><strong>Authorization Server</strong> = Entra ID (issues tokens)</li>
+              <li><strong>Resource Server</strong> = GitHub API (validates tokens during developer use, not during login)</li>
+            </ul>
+          </div>
+          <div class="panel tinted-teal">
+            <h3 style="font-size:16px;margin-bottom:10px;">Entra ID wears two hats simultaneously</h3>
+            <p style="font-size:13px;line-height:1.7;color:var(--text-2);margin:0;">
+              Entra is the OAuth 2.0 <strong>Authorization Server</strong> and the OIDC <strong>Provider</strong> &mdash; <em>through the same endpoints</em>. With <code>scope=openid email profile</code>, the <code>/token</code> endpoint returns an ID Token + Access Token (OIDC). Without <code>openid</code>, it returns only an Access Token (pure OAuth). The scope is the fork.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== OIDC FLOW + INTERACTIVE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the login dance</span>
+        <h2>OIDC authentication flow &mdash; Authorization Code + PKCE</h2>
+        <p class="lead">GitHub EMU (the Client) orchestrates the eight-step handshake. The critical detail: the auth code travels through the browser, but the <em>token exchange</em> goes over a private back-channel that the user never sees.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">OIDC sequence &mdash; Entra ID &rarr; GitHub EMU</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="oidcReset">reset</button>
+              <button class="btn ghost" id="oidcStep">step</button>
+              <button class="btn" id="oidcPlay">play</button>
+            </div>
+          </div>
+          <ol class="flow-steps interactive" id="oidcFlow">
+            <li><span class="flow-dir toidp">user &rarr; gh</span> User navigates to the GitHub enterprise URL.</li>
+            <li><span class="flow-dir toclient">gh &rarr; user</span> HTTP 302 redirect to Entra's <code>/authorize</code>. Carries <code>client_id</code>, <code>redirect_uri</code>, <code>scope=openid email profile</code>, <code>state</code>, <code>nonce</code>, <code>code_challenge</code>.</li>
+            <li><span class="flow-dir toidp">user &rarr; entra</span> Browser follows the redirect. <strong>Conditional Access</strong> evaluates context. User authenticates (password+MFA or FIDO2). Secrets only ever touch the IdP.</li>
+            <li><span class="flow-dir toclient">entra &rarr; user</span> Short-lived authorization code issued. Browser redirected back to the GitHub callback.</li>
+            <li><span class="flow-dir toidp">user &rarr; gh</span> Browser delivers the auth code. GitHub verifies <code>state</code>.</li>
+            <li class="back-channel"><span class="flow-dir server">gh &rarr; entra</span> <strong>Back-channel:</strong> POST to <code>/token</code> with the code + <code>client_id</code> + <code>client_secret</code> + <code>code_verifier</code>. Never touches the browser.<span class="bc-badge">back-channel</span></li>
+            <li><span class="flow-dir toclient">entra &rarr; gh</span> Entra verifies the verifier against the original challenge. Returns <strong>ID Token</strong> + <strong>Access Token</strong> + <strong>Refresh Token</strong>. GitHub validates the ID Token via JWKS.</li>
+            <li><span class="flow-dir toclient">gh &rarr; user</span> Claims mapped to the SCIM-provisioned EMU account. Session cookie set.</li>
+          </ol>
+
+          <div class="oidc-status" id="oidcStatus">
+            <span class="progress" id="oidcProgress">0 / 8</span>
+            <span class="msg" id="oidcMsg">Press play to walk through the 8-step OIDC flow.</span>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <strong>Prerequisite:</strong> This entire flow fails at step 8 if the user was never SCIM-provisioned. SCIM creates the account; OIDC only authenticates an account that already exists. Order matters.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== PKCE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">protecting the auth code</span>
+        <h2>PKCE &mdash; the verifier that never leaves the server</h2>
+        <p class="lead">The authorization code travels through the browser. What stops an attacker who steals it from exchanging it for tokens? A short-lived secret that GitHub holds onto.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">PKCE handshake &mdash; <code>code_verifier</code> vs <code>code_challenge</code></div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="pkceReset">reset</button>
+              <button class="btn ghost" id="pkceAttack">simulate attacker</button>
+              <button class="btn ghost" id="pkceStep">step</button>
+              <button class="btn" id="pkcePlay">play</button>
+            </div>
+          </div>
+
+          <div class="pkce-demo">
+            <div class="pkce-actors">
+              <div class="pkce-actor gh">
+                <div class="name">GitHub EMU</div>
+                <div class="role">OAuth Client</div>
+              </div>
+              <div class="pkce-actor brw">
+                <div class="name">Browser</div>
+                <div class="role">in transit</div>
+              </div>
+              <div class="pkce-actor idp">
+                <div class="name">Entra ID</div>
+                <div class="role">Auth Server</div>
+              </div>
+            </div>
+
+            <div class="pkce-pin-row">
+              <div class="pkce-verifier-pin" id="pkceVerifierPin" style="opacity:0;">
+                <strong>code_verifier</strong> &middot; stays on GitHub
+              </div>
+            </div>
+
+            <div class="pkce-steps" id="pkceSteps">
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">A</div>
+                <div class="pkce-cell op-gh">Generate <code>code_verifier</code> &mdash; random 128-char secret. Stays on GitHub's server.</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">B</div>
+                <div class="pkce-cell op-gh">Compute <code>code_challenge = SHA256(code_verifier)</code>.</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">C</div>
+                <div class="pkce-msg via-brw span-3">
+                  <span class="arrow">GitHub &rarr; Browser &rarr; Entra &middot; auth request</span>
+                  Carries <code>code_challenge</code> (the hash) plus <code>client_id</code>, <code>redirect_uri</code>, <code>state</code>. The verifier itself never leaves GitHub.
+                </div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">D</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell op-idp">Entra stores <code>code_challenge</code> for this session.</div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">E</div>
+                <div class="pkce-msg vuln span-3">
+                  <span class="arrow">Entra &rarr; Browser &rarr; GitHub &middot; auth code</span>
+                  Authorization code returns through the browser. <strong>Vulnerable window</strong> &mdash; could be intercepted here.
+                </div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell danger">Attacker captures the auth code from the browser.</div>
+                <div class="pkce-cell empty"></div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-msg vuln span-3">
+                  <span class="arrow">Attacker &rarr; Entra &middot; token request (no verifier)</span>
+                  Attacker POSTs the stolen code to <code>/token</code>. They never had the verifier &mdash; it lived only on GitHub's server.
+                </div>
+              </div>
+
+              <div class="pkce-step attack hidden" data-kind="attack">
+                <div class="pkce-letter">X</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell danger">Entra: <code>SHA256(?) !== stored challenge</code>. Reject. <strong>No tokens issued.</strong></div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">F</div>
+                <div class="pkce-msg back-ch span-3">
+                  <span class="arrow">GitHub &rarr; Entra &middot; back-channel POST /token (bypasses browser)</span>
+                  Server-to-server over TLS. Carries auth code + <code>client_secret</code> + <code>code_verifier</code>. The verifier reaches Entra for the first time.
+                </div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">G</div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell empty"></div>
+                <div class="pkce-cell op-idp">Entra recomputes <code>SHA256(verifier)</code>. Matches the stored challenge.</div>
+              </div>
+
+              <div class="pkce-step" data-kind="normal">
+                <div class="pkce-letter">H</div>
+                <div class="pkce-msg success span-3">
+                  <span class="arrow">Entra &rarr; GitHub &middot; tokens</span>
+                  ID Token + Access Token + Refresh Token returned to the legitimate Client.
+                </div>
+              </div>
+
+            </div>
+
+            <div class="pkce-status" id="pkceStatus">
+              <span class="progress" id="pkceProgress">0 / 8</span>
+              <span class="msg" id="pkceMsg">Press <strong>play</strong> to walk through the handshake.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Why this matters:</strong> Without PKCE, a stolen authorization code is enough to obtain tokens. With PKCE, the code is useless without the secret that only the legitimate Client holds. PKCE is now mandatory for all new Entra app registrations.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== AUTH METHODS (FIDO2 / passwords / passkeys) ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">what happens inside step 3</span>
+        <h2>Authentication methods at the IdP</h2>
+        <p class="lead">OIDC does not care <em>how</em> the user authenticates &mdash; the IdP handles it internally and GitHub receives the same ID Token either way. Three flavours, very different security properties.</p>
+
+        <div class="grid grid-3" style="margin-top: 20px;">
+          <div class="card no-hover">
+            <h3 class="card-title">Password + MFA</h3>
+            <p>Type the password, then approve an MFA push or enter an OTP. Two separate steps, two factors (know + have / are).</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge" style="background:var(--acc-5-soft);color:var(--acc-5);border-color:var(--acc-5);">phishable &mdash; password can be stolen</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">FIDO2 / WebAuthn</h3>
+            <p>Tap a security key, fingerprint, or Face ID. A single gesture satisfies both factors (have + are). FIDO2 = WebAuthn (browser API) + CTAP2 (device protocol).</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge oidc">phishing-resistant &mdash; origin-bound</span></div>
+          </div>
+          <div class="card no-hover">
+            <h3 class="card-title">Passkeys</h3>
+            <p>Same cryptography as FIDO2, but credentials sync across devices via cloud keychains (iCloud, Google, Microsoft). A passkey <em>is</em> a WebAuthn credential.</p>
+            <div class="card-meta" style="margin-top: 12px;"><span class="tag-badge oidc">phishing-resistant + recoverable</span></div>
+          </div>
+        </div>
+
+        <div class="stage" style="margin-top: 22px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">Phishing simulator &mdash; password vs FIDO2, same scenario</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="phishReset">reset</button>
+            </div>
+          </div>
+
+          <div class="phish-controls">
+            <span class="label">Scenario</span>
+            <div class="ca-segment" id="phishScenario" data-signal="scenario">
+              <button data-value="legit" class="active">legitimate site</button>
+              <button data-value="phish">phishing site</button>
+            </div>
+          </div>
+
+          <div class="phish-grid">
+            <!-- Password column -->
+            <div class="phish-col" id="phishPwCol">
+              <div class="phish-method">Method &middot; Password + MFA</div>
+              <div class="phish-browser">
+                <span class="phish-icon">
+                  <svg class="ico-good" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                  <svg class="ico-bad" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </span>
+                <span class="domain" id="phishPwDomain">login.microsoftonline.com</span>
+              </div>
+              <div class="phish-form">
+                <div class="phish-form-row">
+                  <div class="phish-form-label">email</div>
+                  <div class="phish-form-input">alice@bank.com</div>
+                </div>
+                <div class="phish-form-row">
+                  <div class="phish-form-label">password</div>
+                  <div class="phish-form-input">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</div>
+                </div>
+                <button class="phish-submit" id="phishPwSubmit">submit credentials</button>
+              </div>
+              <div class="phish-outcome" id="phishPwOutcome">
+                <div class="o-label">outcome</div>
+                <div class="o-text" id="phishPwText">Press the button to submit credentials.</div>
+              </div>
+            </div>
+
+            <!-- FIDO2 column -->
+            <div class="phish-col" id="phishF2Col">
+              <div class="phish-method">Method &middot; FIDO2 / WebAuthn</div>
+              <div class="phish-browser">
+                <span class="phish-icon">
+                  <svg class="ico-good" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                  <svg class="ico-bad" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </span>
+                <span class="domain" id="phishF2Domain">login.microsoftonline.com</span>
+              </div>
+              <div class="phish-prompt">
+                <div class="phish-key-icon">
+                  <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                  </svg>
+                </div>
+                <div class="phish-prompt-text">Tap your security key to sign in.</div>
+                <button class="phish-submit" id="phishF2Submit">tap security key</button>
+              </div>
+              <div class="phish-outcome" id="phishF2Outcome">
+                <div class="o-label">outcome</div>
+                <div class="o-text" id="phishF2Text">Press the button to invoke the authenticator.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout" style="margin-top: 18px;">
+            <strong>Why FIDO2 wins:</strong> The authenticator signs a challenge for the <em>exact origin</em> the browser is requesting it for. There is no "user typo and submit" mistake to make &mdash; the device either has a credential registered for that origin or it doesn't. The cryptographic binding is enforced by silicon, not by the user remembering to check the URL.
+          </div>
+        </div>
+
+        <p style="margin-top: 16px; font-size: 13px; color: var(--text-2);">
+          These methods operate <em>underneath</em> OIDC, inside step 3 of the flow above. GitHub never knows which one was used &mdash; it only receives the ID Token.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============== CONDITIONAL ACCESS PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the policy gate</span>
+        <h2>Conditional Access &mdash; the gate between AuthN and token issuance</h2>
+        <p class="lead">CA sits <strong>inside Entra</strong>, after authentication succeeds (step 3) but before the authorization code is issued (step 4). It evaluates context and can allow, block, or require step-up.</p>
+
+        <div class="stage" style="margin-top: 20px;">
+          <div class="stage-toolbar">
+            <div class="stage-title">Conditional Access policy simulator</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="caReset">reset signals</button>
+            </div>
+          </div>
+
+          <div class="grid grid-2" style="gap: 22px;">
+            <div>
+              <div class="ca-section-label">Signals (inputs)</div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">Device</div>
+                <div class="ca-segment" data-signal="device">
+                  <button data-value="compliant" class="active">compliant</button>
+                  <button data-value="non-compliant">non-compliant</button>
+                </div>
+              </div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">Location</div>
+                <div class="ca-segment" data-signal="location">
+                  <button data-value="corp" class="active">corporate</button>
+                  <button data-value="us-public">US public</button>
+                  <button data-value="outside-us">outside US</button>
+                </div>
+              </div>
+
+              <div class="ca-signal">
+                <div class="ca-signal-label">User risk score</div>
+                <div class="ca-segment" data-signal="risk">
+                  <button data-value="low" class="active">low</button>
+                  <button data-value="medium">medium</button>
+                  <button data-value="high">high</button>
+                </div>
+              </div>
+
+              <div class="ca-signal" style="margin-bottom: 0;">
+                <div class="ca-signal-label">Target app</div>
+                <div class="ca-segment" data-signal="app">
+                  <button data-value="github" class="active">GitHub</button>
+                  <button data-value="other">other app</button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="ca-section-label">Decision (output)</div>
+              <div class="ca-decision mfa" id="caDecision">
+                <div class="label">Conditional Access verdict</div>
+                <div class="result" id="caResult">REQUIRE MFA</div>
+                <div class="reason" id="caReason">Baseline MFA applies &mdash; user authenticates with MFA and access is granted.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ca-section-label" style="margin-top: 22px;">Policy evaluation</div>
+          <div class="ca-policies" id="caPolicies">
+            <div class="ca-policy" data-policy="block-non-us">
+              <div>
+                <div class="name">block-access-outside-us</div>
+                <div class="desc">Fires when: location is outside the US.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy" data-policy="require-compliant-github">
+              <div>
+                <div class="name">require-compliant-device-for-github</div>
+                <div class="desc">Fires when: target app is GitHub AND device is non-compliant.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy" data-policy="stepup-high-risk">
+              <div>
+                <div class="name">stepup-mfa-for-high-risk-users</div>
+                <div class="desc">Fires when: user risk score is high.</div>
+              </div>
+              <div class="outcome">does not apply</div>
+            </div>
+            <div class="ca-policy fires winner" data-policy="baseline-mfa">
+              <div>
+                <div class="name">baseline-mfa-required</div>
+                <div class="desc">Fires always &mdash; catch-all policy. Only "wins" when nothing stricter applies.</div>
+              </div>
+              <div class="outcome">require MFA</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <strong>Why this matters for SOX:</strong> CA is where the access controls auditors care about actually get enforced. The policies are invisible to GitHub (it just sees the login succeed or fail) but they make your identity perimeter testable and provable.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== TOKEN LIFECYCLE + REVOCATION GAP PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">issued, refreshed, revoked</span>
+        <h2>Token lifecycle and the revocation gap</h2>
+        <p class="lead">Issuing tokens is the easy part. What happens after &mdash; when an Access Token expires, when someone is fired at 2pm &mdash; is where the architecture is judged.</p>
+
+        <div class="panel-pair" style="margin: 20px 0;">
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">Token types and lifetimes</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>ID Token</strong> (~1 hour) &mdash; used once at login to establish identity. Not used after.</li>
+              <li><strong>Access Token</strong> (~1 hour) &mdash; authorizes API calls. Short-lived by design.</li>
+              <li><strong>Refresh Token</strong> (days &ndash; months) &mdash; silently obtains new Access Tokens without re-auth. Long-lived.</li>
+              <li><strong>Session cookie</strong> (app-specific) &mdash; GitHub holds its own session, independent of IdP token expiry.</li>
+            </ul>
+          </div>
+          <div class="panel tinted-red">
+            <h3 style="font-size:16px;margin-bottom:10px;">The revocation gap</h3>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);">
+              User terminated at 2pm. SCIM deprovisions on the next sync cycle (up to ~40 minutes). But the user's <strong>active GitHub session may persist</strong> until the session cookie expires. During that window, they can still act on the system.
+            </p>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin-top:8px;">
+              <strong>Mitigation:</strong> enable <strong>CAE</strong> &mdash; Entra pushes critical events (account disabled, password changed, high risk) to supported apps, causing near-real-time session revocation. Also: trigger on-demand SCIM sync for terminations.
+            </p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">Termination timeline &mdash; the revocation gap</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="termReset">reset</button>
+              <button class="btn ghost" id="termCae">CAE: off</button>
+              <button class="btn" id="termFire">fire user at t=30 min</button>
+            </div>
+          </div>
+
+          <div class="term-demo">
+            <div class="term-timeline">
+              <div class="term-axis">
+                <span style="left: 0%">0</span>
+                <span style="left: 25%">30 min</span>
+                <span style="left: 50%">60 min</span>
+                <span style="left: 75%">90 min</span>
+                <span style="left: 100%">120 min</span>
+              </div>
+
+              <div class="term-body">
+                <div class="term-labels">
+                  <div>ID Token</div>
+                  <div>Access Token</div>
+                  <div>Refresh Token</div>
+                  <div>Session Cookie</div>
+                </div>
+
+                <div class="term-bars" id="termBars">
+                  <div class="bar-row">
+                    <div class="bar id-token" style="width: 50%"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar access-token" style="width: 50%"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar refresh-token"></div>
+                  </div>
+                  <div class="bar-row">
+                    <div class="bar session" id="termSessionBar" style="width: 83.3%"></div>
+                  </div>
+
+                  <div class="term-gap" id="termGap"></div>
+                  <div class="term-event term" id="termEventTerm" style="left: 25%;">
+                    <span class="ev-label right">user fired (t=30)</span>
+                  </div>
+                  <div class="term-event cae" id="termEventCae" style="left: 26.7%;">
+                    <span class="ev-label right below">CAE event (t=32)</span>
+                  </div>
+                  <div class="term-event scim" id="termEventScim" style="left: 58.3%;">
+                    <span class="ev-label right">SCIM deprovision (t=70)</span>
+                  </div>
+                </div>
+
+                <div class="term-metas">
+                  <div>~1 hr</div>
+                  <div>~1 hr</div>
+                  <div>days &rarr;</div>
+                  <div>hours</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="term-status" id="termStatus">
+              <div class="headline" id="termHeadline">Login at t=0 &mdash; all tokens valid.</div>
+              <div class="detail" id="termDetail">Press <strong>fire user</strong> to simulate termination, then toggle <strong>CAE</strong> to see how Continuous Access Evaluation collapses the gap.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== SCIM PROVISIONING + LIFECYCLE PLACEHOLDER ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">the other half of the system</span>
+        <h2>SCIM provisioning &mdash; push-based, server-to-server</h2>
+        <p class="lead">SCIM is the boring, reliable plumbing that makes OIDC login possible in the first place. Triggered when a user or group is assigned to the GitHub enterprise app in Entra. Direction is always Entra &rarr; GitHub.</p>
+
+        <div class="panel-pair" style="margin: 20px 0;">
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">User and group operations</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><code>POST /Users</code> &mdash; create</li>
+              <li><code>GET /Users</code> &mdash; list / search</li>
+              <li><code>PATCH /Users/{id}</code> &mdash; partial update</li>
+              <li><code>PUT /Users/{id}</code> &mdash; replace</li>
+              <li><code>DELETE /Users/{id}</code> &mdash; deprovision</li>
+              <li><code>POST / PATCH / DELETE /Groups</code> &mdash; team mapping</li>
+            </ul>
+            <p style="font-size:12px;color:var(--dim);margin-top:10px;">Base: <code>api.github.com/scim/v2/enterprises/{enterprise}/</code></p>
+          </div>
+          <div class="panel">
+            <h3 style="font-size:16px;margin-bottom:10px;">Sync cycles &amp; attribute mapping</h3>
+            <ul style="padding-left:18px;font-size:13px;line-height:1.7;color:var(--text-2);">
+              <li><strong>Initial:</strong> full enumeration via POST</li>
+              <li><strong>Incremental:</strong> every ~40 min (PATCH / DELETE)</li>
+              <li><strong>On-demand:</strong> manual trigger from Entra portal</li>
+            </ul>
+            <p style="font-size:12px;color:var(--dim);margin-top:10px;font-family:var(--font-mono);">
+              userPrincipalName &rarr; userName<br>
+              displayName &rarr; displayName<br>
+              mail &rarr; emails[work].value<br>
+              objectId &rarr; externalId
+            </p>
+            <p style="font-size:13px;color:var(--text-2);margin-top:8px;">
+              <strong>SCIM auth:</strong> PAT bearer token &mdash; completely unrelated to OIDC credentials.
+            </p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-toolbar">
+            <div class="stage-title">SCIM lifecycle &mdash; events queue at Entra, sync drains them into GitHub</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn ghost" id="scimReset">reset</button>
+              <button class="btn" id="scimPlay">play</button>
+            </div>
+          </div>
+
+          <div class="scim-demo">
+            <div class="scim-meter" id="scimMeter">
+              <div class="m-cell">
+                <div class="m-label">Simulated time</div>
+                <div class="m-value" id="scimTime">00:00</div>
+              </div>
+              <div class="m-cell">
+                <div class="m-label">Next sync in</div>
+                <div class="m-value" id="scimNextSync">40 min</div>
+              </div>
+              <div class="m-cell">
+                <div class="m-label">Events queued</div>
+                <div class="m-value" id="scimQueueCount">0</div>
+              </div>
+            </div>
+
+            <div class="scim-queue-row">
+              <span class="queue-label">queued at Entra</span>
+              <span class="queue-content" id="scimQueueList">&mdash; empty &mdash;</span>
+            </div>
+
+            <div class="fleet fleet-5" id="scimFleet"></div>
+
+            <div class="scim-log" id="scimLog">
+              <div class="log-empty">Press play. Events will appear here as each sync cycle drains the queue.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== IDENTITY LIFECYCLE ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">how the two protocols connect</span>
+        <h2>Identity lifecycle &mdash; SCIM and OIDC in sequence</h2>
+        <p class="lead">Assign in Entra &rarr; SCIM provisions &rarr; user logs in via OIDC &rarr; SCIM keeps syncing &rarr; SCIM deprovisions. SCIM must complete before OIDC login can succeed.</p>
+
+        <div class="callout">
+          <strong>Why SCIM instead of JIT?</strong> JIT (Just-In-Time provisioning) only creates accounts at first login. No ongoing sync, no group management, no deprovisioning. GitHub EMU requires SCIM &mdash; JIT is not supported. SCIM is the enterprise approach: full lifecycle, server-to-server, accounts pre-staged before the first login.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== OAUTH GRANT TYPES ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">beyond the auth code flow</span>
+        <h2>OAuth 2.0 grant types in this architecture</h2>
+        <p class="lead">Authorization Code with PKCE is the user-in-browser flow we've been discussing. OAuth defines a few others for different shapes of caller.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>Grant type</th><th>When</th><th>User?</th><th>Example here</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Authorization Code + PKCE</td><td>Web app login</td><td>Yes (browser)</td><td>GitHub EMU OIDC login &mdash; the flow throughout this page.</td></tr>
+            <tr><td class="mono">Client Credentials</td><td>Service-to-service</td><td>No</td><td>Machine-to-machine API calls. Conceptually similar to SCIM &mdash; a provisioning engine calling an API with a bearer token, no human in the loop.</td></tr>
+            <tr><td class="mono">Device Code</td><td>Input-constrained device</td><td>Yes (separate screen)</td><td><code>gh auth login</code> on the CLI. Device shows a code; user enters it on a separate browser to authorize.</td></tr>
+            <tr><td class="mono">Refresh Token</td><td>Silent token renewal</td><td>No (silent)</td><td>Access Token expires &rarr; app uses the Refresh Token to get a new one without re-authenticating.</td></tr>
+            <tr><td class="mono">Implicit (deprecated)</td><td>Legacy SPAs</td><td>Yes</td><td>Returned tokens directly in the URL fragment. Insecure &mdash; no back-channel, no PKCE. Replaced by Auth Code + PKCE.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== DISCOVERY + SLO ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">bootstrap &amp; logout</span>
+        <h2>OIDC Discovery and Single Logout</h2>
+        <p class="lead">How GitHub finds Entra's endpoints (Discovery), and why logging out everywhere is harder than logging in (SLO).</p>
+
+        <h3 style="font-family:var(--font-display);font-size:18px;margin-top:16px;color:var(--text-strong);">The Discovery document</h3>
+        <p style="font-size:13px;color:var(--text-2);">A single JSON document at <code>https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration</code> tells GitHub everything it needs to know about Entra: <code>authorization_endpoint</code>, <code>token_endpoint</code>, <code>jwks_uri</code>, <code>issuer</code>, <code>scopes_supported</code>, <code>response_types_supported</code>, <code>grant_types_supported</code>, <code>end_session_endpoint</code>.</p>
+        <p style="font-size:13px;color:var(--text-2);margin-top:8px;">If this URL becomes unreachable or returns wrong data, the entire OIDC trust chain breaks. Single point of failure &mdash; monitor it.</p>
+
+        <h3 style="font-family:var(--font-display);font-size:18px;margin-top:24px;color:var(--text-strong);">Single Logout (SLO)</h3>
+        <p style="font-size:13px;color:var(--text-2);">Two mechanisms, both fragile.</p>
+
+        <div class="panel-pair" style="margin-top: 12px;">
+          <div class="panel">
+            <h4 style="font-family:var(--font-display);font-size:14px;color:var(--text-strong);margin-bottom:8px;">Front-channel logout</h4>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin:0;">GitHub redirects the browser to Entra's <code>end_session_endpoint</code>. Entra loads hidden iframes pointing at every app's logout URL. Relies on browser behaviour &mdash; ad blockers, cookie policies, and network hiccups silently break it.</p>
+          </div>
+          <div class="panel">
+            <h4 style="font-family:var(--font-display);font-size:14px;color:var(--text-strong);margin-bottom:8px;">Back-channel logout</h4>
+            <p style="font-size:13px;line-height:1.65;color:var(--text-2);margin:0;">Entra sends a server-to-server POST with a logout token to each app's registered back-channel logout URI. More reliable, but the app has to implement the endpoint and process the token.</p>
+          </div>
+        </div>
+
+        <div class="callout info" style="margin-top: 18px;">
+          <strong>Practical reality:</strong> Full SLO is fragile and many implementations don't fully support it. For the employee-termination scenario, rely on SCIM deprovisioning + CAE rather than SLO.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== GITHUB EMU THREE HATS ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">one product, three roles</span>
+        <h2>GitHub EMU wears three hats</h2>
+        <p class="lead">Most architecture confusion comes from forgetting that GitHub plays different roles in different conversations.</p>
+
+        <div style="margin-top: 18px;">
+          <div class="role-card oidc">
+            <h4>Hat 1 &mdash; OAuth 2.0 Client <span class="tag-badge oidc" style="margin-left:8px;">OIDC login</span></h4>
+            <p>Initiates the auth request, redirects to Entra, receives the code, exchanges it on the back-channel (with PKCE), validates the ID Token via JWKS, maps claims to an EMU account, creates the session. <strong>Active orchestration.</strong></p>
+          </div>
+          <div class="role-card scim">
+            <h4>Hat 2 &mdash; SCIM server <span class="tag-badge scim" style="margin-left:8px;">provisioning</span></h4>
+            <p>Roles flip. GitHub <em>hosts</em> SCIM API endpoints; Entra <em>calls in</em>. Authenticated via PAT bearer token. <strong>GitHub is the server here.</strong></p>
+          </div>
+          <div class="role-card dev">
+            <h4>Hat 3 &mdash; Resource Server <span class="tag-badge infra" style="margin-left:8px;">developer use</span></h4>
+            <p>When devs run <code>git push</code> or call the API (sometimes via Device Code), GitHub protects its resources and validates credentials directly. No IdP in the loop for git operations.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== DEPENDENCY CHAIN ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">what depends on what</span>
+        <h2>Dependency and trust chain</h2>
+        <p class="lead">Ordered by dependency. Each row requires those above it. Useful as both a build checklist and an outage triage tree.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>#</th><th>Component</th><th>Where</th><th>Used by</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td class="mono">DNS + TLS</td><td>Infra</td><td><span class="tag-badge both">both</span></td><td>HTTPS for all comms. Must resolve <code>login.microsoftonline.com</code>, <code>api.github.com</code>, <code>github.com</code>.</td></tr>
+            <tr><td class="num">2</td><td class="mono">Entra ID tenant</td><td>M365</td><td><span class="tag-badge both">both</span></td><td>Identity store. OAuth 2.0 AS + OIDC Provider. Hosts Conditional Access.</td></tr>
+            <tr><td class="num">3</td><td class="mono">GitHub Enterprise (EMU)</td><td>GitHub</td><td><span class="tag-badge both">both</span></td><td>Client (login), SCIM Server (provisioning), Resource Server (dev use).</td></tr>
+            <tr><td class="num">4</td><td class="mono">Enterprise app registration</td><td>Entra ID</td><td><span class="tag-badge both">both</span></td><td>Single registration with OIDC config + SCIM config. <code>openid</code> activates OIDC.</td></tr>
+            <tr><td class="num">5</td><td class="mono">OIDC discovery doc</td><td>Entra (auto)</td><td><span class="tag-badge oidc">oidc</span></td><td><code>.well-known/openid-configuration</code> &mdash; bootstrap for the entire trust relationship. If unreachable, nothing works.</td></tr>
+            <tr><td class="num">6</td><td class="mono">client_id + client_secret</td><td>Entra &rarr; GitHub</td><td><span class="tag-badge oidc">oidc</span></td><td><code>client_id</code> identifies GitHub; <code>client_secret</code> authenticates the back-channel exchange.</td></tr>
+            <tr><td class="num">7</td><td class="mono">JWKS endpoint</td><td>Entra (auto)</td><td><span class="tag-badge oidc">oidc</span></td><td>Public keys for JWT verification. Auto-rotating &mdash; respect the cache headers.</td></tr>
+            <tr><td class="num">8</td><td class="mono">Redirect URI(s)</td><td>Entra app</td><td><span class="tag-badge oidc">oidc</span></td><td>Callback URL for the auth code. Must match exactly, including trailing slash.</td></tr>
+            <tr><td class="num">9</td><td class="mono">Conditional Access</td><td>Entra ID</td><td><span class="tag-badge oidc">oidc</span></td><td>Policy gate between AuthN and token issuance. Evaluates device, location, risk.</td></tr>
+            <tr><td class="num">10</td><td class="mono">SCIM endpoint URL</td><td>Entra prov.</td><td><span class="tag-badge scim">scim</span></td><td><code>api.github.com/scim/v2/enterprises/{enterprise}/</code></td></tr>
+            <tr><td class="num">11</td><td class="mono">SCIM bearer (PAT)</td><td>GitHub &rarr; Entra</td><td><span class="tag-badge scim">scim</span></td><td>PAT with <code>admin:enterprise</code>. Unrelated to OIDC. Rotate before expiry.</td></tr>
+            <tr><td class="num">12</td><td class="mono">Attribute mappings</td><td>Entra prov.</td><td><span class="tag-badge scim">scim</span></td><td>Maps Entra fields to SCIM schema. Errors here cause silent attribute drift.</td></tr>
+            <tr><td class="num">13</td><td class="mono">User / group assignments</td><td>Entra app</td><td><span class="tag-badge scim">scim</span></td><td>Only assigned users / groups are provisioned. <strong>Assignment is the trigger.</strong></td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <strong>Trust summary:</strong> GitHub trusts Entra via JWKS signature verification (OIDC). Entra trusts GitHub via the pre-configured SCIM endpoint + PAT. User credentials (password / MFA / FIDO2) go <strong>only</strong> to Entra, never to GitHub. Two secrets in play: <code>client_secret</code> (OIDC back-channel) and the PAT bearer (SCIM). Two public mechanisms: JWKS and the discovery document.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== FAILURE MODES ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">when things break</span>
+        <h2>Failure modes &mdash; what each symptom usually means</h2>
+        <p class="lead">A pattern library for triage. Most live incidents reduce to one of these.</p>
+
+        <table class="ref-table" style="margin-top: 16px;">
+          <thead><tr><th>Symptom</th><th>Protocol</th><th>Root cause &rarr; fix</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">"Account not found" at login</td><td><span class="tag-badge scim">scim</span></td><td>User not provisioned. Must be <strong>assigned to the GitHub enterprise app</strong> in Entra. Check provisioning logs.</td></tr>
+            <tr><td class="mono">redirect_uri_mismatch</td><td><span class="tag-badge oidc">oidc</span></td><td>Callback URL does not exactly match the Entra app registration. Check trailing slashes.</td></tr>
+            <tr><td class="mono">Invalid signature</td><td><span class="tag-badge oidc">oidc</span></td><td>JWKS endpoint unreachable (firewall), keys rotated with a stale cache, or wrong issuer URL.</td></tr>
+            <tr><td class="mono">SCIM 401 Unauthorized</td><td><span class="tag-badge scim">scim</span></td><td>PAT expired or revoked. Generate a new one in GitHub, update the Entra config.</td></tr>
+            <tr><td class="mono">Attributes out of sync</td><td><span class="tag-badge scim">scim</span></td><td>Incorrect attribute mappings, or sync hasn't run yet (~40 min). Trigger a manual sync.</td></tr>
+            <tr><td class="mono">Unexpected deprovision</td><td><span class="tag-badge scim">scim</span></td><td>User unassigned from the app, or Entra account disabled. SCIM propagated correctly.</td></tr>
+            <tr><td class="mono">Login OK but wrong teams</td><td><span class="tag-badge scim">scim</span></td><td>OIDC auth succeeded but SCIM group mappings are wrong. AuthN and AuthZ are separate.</td></tr>
+            <tr><td class="mono">Login blocked unexpectedly</td><td><span class="tag-badge oidc">oidc</span></td><td><strong>Conditional Access</strong> blocking. Check for non-compliant device, risky location, high user risk score. Entra sign-in logs include the CA evaluation result.</td></tr>
+            <tr><td class="mono">Terminated user still has access</td><td><span class="tag-badge both">both</span></td><td><strong>Revocation gap.</strong> SCIM hasn't run yet (~40 min cycle) and / or session cookie persists. Mitigate: on-demand SCIM sync for terminations + enable CAE.</td></tr>
+            <tr><td class="mono">Discovery endpoint unreachable</td><td><span class="tag-badge oidc">oidc</span></td><td><code>.well-known/openid-configuration</code> blocked by firewall or DNS failure. No OIDC flow can start. Check the network path to <code>login.microsoftonline.com</code>.</td></tr>
+            <tr><td class="mono">PKCE verification failed</td><td><span class="tag-badge oidc">oidc</span></td><td><code>code_verifier</code> does not match the original <code>code_challenge</code>. Usually a bug in a custom integration. For GitHub EMU this is automatic &mdash; if rolling your own, verify the challenge method is <code>S256</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== ROADMAP NOTE ============== -->
+    <section class="section">
+      <div class="container">
+        <span class="sec-eyebrow">page complete</span>
+        <h2>All six interactive walkthroughs are live</h2>
+        <p>Each placeholder stage on this page is now a working demo:</p>
+        <ol style="margin-top: 12px; padding-left: 24px; font-size: 13px; line-height: 1.9; color: var(--text-2);">
+          <li>OIDC sequence diagram &middot; play through the 8-step Authorization Code flow (§5)</li>
+          <li>PKCE handshake &middot; verifier vs challenge, with an attacker-intercept toggle (§6)</li>
+          <li>Phishing simulator &middot; password leaks, FIDO2 refuses the wrong origin (§7)</li>
+          <li>Conditional Access policy simulator &middot; signals in, decision out (§8)</li>
+          <li>Termination timeline &middot; the revocation gap and how CAE collapses it (§9)</li>
+          <li>SCIM lifecycle ticker &middot; events queue at Entra, sync drains them into GitHub (§10)</li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div>&copy; <span id="year"></span> my-learnings &middot; built static &middot; no tracking</div>
+      <div><a href="../">home</a></div>
+    </div>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+
+  <script>
+    // PKCE handshake widget — sequence-diagram state machine
+    (function () {
+      const stepsRoot = document.getElementById('pkceSteps');
+      if (!stepsRoot) return;
+
+      const allSteps    = Array.from(stepsRoot.querySelectorAll('.pkce-step'));
+      const normalSteps = allSteps.filter(s => s.dataset.kind === 'normal');
+      const attackSteps = allSteps.filter(s => s.dataset.kind === 'attack');
+
+      const verifierPin = document.getElementById('pkceVerifierPin');
+      const progressEl  = document.getElementById('pkceProgress');
+      const msgEl       = document.getElementById('pkceMsg');
+      const statusEl    = document.getElementById('pkceStatus');
+
+      const playBtn   = document.getElementById('pkcePlay');
+      const stepBtn   = document.getElementById('pkceStep');
+      const resetBtn  = document.getElementById('pkceReset');
+      const attackBtn = document.getElementById('pkceAttack');
+
+      const normalCaptions = [
+        'GitHub generates the verifier locally — never sent to Entra.',
+        'Hash the verifier into a challenge. Only the hash will travel.',
+        'Auth request carries the challenge through the browser.',
+        'Entra stores the challenge for this session.',
+        'Auth code returns through the browser — the moment of risk.',
+        'Back-channel token exchange — verifier finally leaves GitHub.',
+        'Entra re-hashes the verifier and matches the stored challenge.',
+        'Match. Tokens issued to the legitimate Client.'
+      ];
+      const attackCaptions = [
+        'Attacker captures the auth code from the browser.',
+        'Attacker POSTs the code to /token — but has no verifier.',
+        'Entra rejects: hash mismatch. No tokens issued to the attacker.'
+      ];
+      const INITIAL_MSG = 'Press play to walk through the handshake.';
+
+      const STEP_INTERVAL_MS = 1100;
+      let visibleSteps = [];
+      let position = 0;
+      let attackMode = false;
+      let timer = null;
+
+      function rebuildVisible() {
+        if (attackMode) {
+          visibleSteps = [
+            ...normalSteps.slice(0, 5),  // A..E
+            ...attackSteps,              // X1, X2, X3
+            ...normalSteps.slice(5)      // F..H
+          ];
+        } else {
+          visibleSteps = [...normalSteps];
+        }
+        attackSteps.forEach(s => s.classList.toggle('hidden', !attackMode));
+      }
+
+      function render() {
+        visibleSteps.forEach((s, i) => {
+          s.classList.remove('active', 'done');
+          if (i < position - 1) s.classList.add('done');
+          else if (i === position - 1) s.classList.add('active');
+        });
+
+        verifierPin.style.opacity = position >= 1 ? '1' : '0';
+        progressEl.textContent = position + ' / ' + visibleSteps.length;
+
+        if (position === 0) {
+          statusEl.classList.remove('attack-mode');
+          msgEl.textContent = INITIAL_MSG;
+        } else {
+          captionFor(visibleSteps[position - 1]);
+        }
+      }
+
+      function captionFor(stepEl) {
+        const isAttack = stepEl.dataset.kind === 'attack';
+        statusEl.classList.toggle('attack-mode', isAttack);
+        if (isAttack) {
+          msgEl.textContent = attackCaptions[attackSteps.indexOf(stepEl)];
+        } else {
+          msgEl.textContent = normalCaptions[normalSteps.indexOf(stepEl)];
+        }
+      }
+
+      function advance() {
+        if (position >= visibleSteps.length) {
+          stopAuto();
+          return;
+        }
+        position += 1;
+        render();
+        if (position >= visibleSteps.length) stopAuto();
+      }
+
+      function startAuto() {
+        if (timer) return;
+        if (position >= visibleSteps.length) reset();
+        playBtn.textContent = 'pause';
+        advance();
+        timer = setInterval(advance, STEP_INTERVAL_MS);
+      }
+
+      function stopAuto() {
+        if (timer) { clearInterval(timer); timer = null; }
+        playBtn.textContent = position >= visibleSteps.length ? 'play again' : 'play';
+      }
+
+      function reset() {
+        stopAuto();
+        position = 0;
+        render();
+        playBtn.textContent = 'play';
+      }
+
+      function toggleAttack() {
+        stopAuto();
+        attackMode = !attackMode;
+        attackBtn.classList.toggle('attacker-on', attackMode);
+        attackBtn.textContent = attackMode ? 'attacker on' : 'simulate attacker';
+        position = 0;
+        rebuildVisible();
+        render();
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (timer) stopAuto();
+        else startAuto();
+      });
+      stepBtn.addEventListener('click', () => { stopAuto(); advance(); });
+      resetBtn.addEventListener('click', reset);
+      attackBtn.addEventListener('click', toggleAttack);
+
+      rebuildVisible();
+      render();
+    })();
+
+    // OIDC sequence widget — animates the numbered .flow-steps list
+    (function () {
+      const flowEl = document.getElementById('oidcFlow');
+      if (!flowEl) return;
+
+      const steps = Array.from(flowEl.querySelectorAll('li'));
+      const progressEl = document.getElementById('oidcProgress');
+      const msgEl      = document.getElementById('oidcMsg');
+      const statusEl   = document.getElementById('oidcStatus');
+
+      const playBtn  = document.getElementById('oidcPlay');
+      const stepBtn  = document.getElementById('oidcStep');
+      const resetBtn = document.getElementById('oidcReset');
+
+      const captions = [
+        'User navigates to the GitHub enterprise URL.',
+        'GitHub redirects to Entra /authorize — request carries the PKCE challenge.',
+        'Conditional Access evaluates. User authenticates at the IdP. Secrets never touch GitHub.',
+        'Entra issues a short-lived authorization code.',
+        'Browser delivers the code back to GitHub. state is verified.',
+        'Back-channel POST /token — verifier sent, browser sits this one out.',
+        'Entra returns ID Token + Access Token + Refresh Token. GitHub validates via JWKS.',
+        'Claims mapped to the SCIM-provisioned account. Session cookie set.'
+      ];
+      const INITIAL_MSG = 'Press play to walk through the 8-step OIDC flow.';
+      const BACK_CHANNEL_INDEX = 5; // zero-indexed step 6
+      const STEP_INTERVAL_MS = 1100;
+
+      let position = 0;
+      let timer = null;
+
+      function render() {
+        steps.forEach((s, i) => {
+          s.classList.remove('active', 'done');
+          if (i < position - 1) s.classList.add('done');
+          else if (i === position - 1) s.classList.add('active');
+        });
+        progressEl.textContent = position + ' / ' + steps.length;
+
+        if (position === 0) {
+          statusEl.classList.remove('back-channel');
+          msgEl.textContent = INITIAL_MSG;
+        } else {
+          msgEl.textContent = captions[position - 1];
+          statusEl.classList.toggle('back-channel', position === BACK_CHANNEL_INDEX + 1);
+        }
+      }
+
+      function advance() {
+        if (position >= steps.length) { stopAuto(); return; }
+        position += 1;
+        render();
+        if (position >= steps.length) stopAuto();
+      }
+
+      function startAuto() {
+        if (timer) return;
+        if (position >= steps.length) reset();
+        playBtn.textContent = 'pause';
+        advance();
+        timer = setInterval(advance, STEP_INTERVAL_MS);
+      }
+
+      function stopAuto() {
+        if (timer) { clearInterval(timer); timer = null; }
+        playBtn.textContent = position >= steps.length ? 'play again' : 'play';
+      }
+
+      function reset() {
+        stopAuto();
+        position = 0;
+        render();
+        playBtn.textContent = 'play';
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (timer) stopAuto();
+        else startAuto();
+      });
+      stepBtn.addEventListener('click', () => { stopAuto(); advance(); });
+      resetBtn.addEventListener('click', reset);
+
+      render();
+    })();
+
+    // Conditional Access policy simulator — reactive widget
+    (function () {
+      const policiesRoot = document.getElementById('caPolicies');
+      if (!policiesRoot) return;
+
+      const segments   = document.querySelectorAll('.ca-segment[data-signal]');
+      const decisionEl = document.getElementById('caDecision');
+      const resultEl   = document.getElementById('caResult');
+      const reasonEl   = document.getElementById('caReason');
+      const resetBtn   = document.getElementById('caReset');
+
+      const defaults = { device: 'compliant', location: 'corp', risk: 'low', app: 'github' };
+      let signals = Object.assign({}, defaults);
+
+      // Policy definitions. check(s) -> boolean. Severity sort picks the winner.
+      const policies = [
+        {
+          id: 'block-non-us',
+          decision: 'block',
+          check: s => s.location === 'outside-us',
+          outcome: 'block access',
+          reason: 'Location is outside the US. Access blocked outright before any auth proceeds.'
+        },
+        {
+          id: 'require-compliant-github',
+          decision: 'device',
+          check: s => s.app === 'github' && s.device === 'non-compliant',
+          outcome: 'require compliant device',
+          reason: 'Target is GitHub and the device is non-compliant. User must move to a compliant device.'
+        },
+        {
+          id: 'stepup-high-risk',
+          decision: 'stepup',
+          check: s => s.risk === 'high',
+          outcome: 'require MFA step-up',
+          reason: 'User risk score is high. Re-authenticate before access.'
+        },
+        {
+          id: 'baseline-mfa',
+          decision: 'mfa',
+          check: () => true,
+          outcome: 'require MFA',
+          reason: 'Baseline MFA applies — user authenticates with MFA and access is granted.'
+        }
+      ];
+
+      const severityRank = { block: 0, device: 1, stepup: 2, mfa: 3, allow: 4 };
+      const labels = {
+        block:  'BLOCK',
+        device: 'REQUIRE COMPLIANT DEVICE',
+        stepup: 'REQUIRE MFA STEP-UP',
+        mfa:    'REQUIRE MFA',
+        allow:  'ALLOW'
+      };
+      const decisionClasses = ['allow', 'mfa', 'stepup', 'device', 'block'];
+
+      function evaluate() {
+        const firing = policies.filter(p => p.check(signals));
+        firing.sort((a, b) => severityRank[a.decision] - severityRank[b.decision]);
+        const winner = firing[0]; // baseline-mfa always fires, so this is always defined
+
+        decisionClasses.forEach(c => decisionEl.classList.remove(c));
+        decisionEl.classList.add(winner.decision);
+        resultEl.textContent = labels[winner.decision];
+        reasonEl.textContent = winner.reason;
+
+        policies.forEach(p => {
+          const el = policiesRoot.querySelector('[data-policy="' + p.id + '"]');
+          if (!el) return;
+          const fired = p.check(signals);
+          el.classList.remove('fires', 'winner', 'blocks');
+          if (fired) {
+            el.classList.add('fires');
+            if (p.id === winner.id) el.classList.add('winner');
+            if (p.decision === 'block') el.classList.add('blocks');
+          }
+          const outcomeEl = el.querySelector('.outcome');
+          if (outcomeEl) outcomeEl.textContent = fired ? p.outcome : 'does not apply';
+        });
+      }
+
+      function setSignal(name, value) {
+        signals[name] = value;
+        const seg = document.querySelector('.ca-segment[data-signal="' + name + '"]');
+        if (seg) {
+          seg.querySelectorAll('button').forEach(b => {
+            b.classList.toggle('active', b.dataset.value === value);
+          });
+        }
+        evaluate();
+      }
+
+      segments.forEach(seg => {
+        const signalName = seg.dataset.signal;
+        seg.querySelectorAll('button').forEach(btn => {
+          btn.addEventListener('click', () => setSignal(signalName, btn.dataset.value));
+        });
+      });
+
+      resetBtn.addEventListener('click', () => {
+        Object.keys(defaults).forEach(name => setSignal(name, defaults[name]));
+      });
+
+      evaluate();
+    })();
+
+    // Termination timeline — revocation-gap visualizer
+    (function () {
+      const bars = document.getElementById('termBars');
+      if (!bars) return;
+
+      const fireBtn  = document.getElementById('termFire');
+      const caeBtn   = document.getElementById('termCae');
+      const resetBtn = document.getElementById('termReset');
+
+      const sessionBar = document.getElementById('termSessionBar');
+      const evTerm = document.getElementById('termEventTerm');
+      const evScim = document.getElementById('termEventScim');
+      const evCae  = document.getElementById('termEventCae');
+      const gap    = document.getElementById('termGap');
+
+      const statusEl   = document.getElementById('termStatus');
+      const headlineEl = document.getElementById('termHeadline');
+      const detailEl   = document.getElementById('termDetail');
+
+      // Time constants, in minutes. Timeline shows 0..120.
+      const TIMELINE_MAX = 120;
+      const SESSION_COOKIE_LIFE = 100;   // ~hours, compressed for the demo
+      const TERMINATION_T = 30;
+      const SCIM_SYNC_DELAY = 40;        // termination -> SCIM deprovision
+      const CAE_PROPAGATION_DELAY = 2;   // termination -> CAE-driven session kill
+      const SCIM_T = TERMINATION_T + SCIM_SYNC_DELAY;     // 70
+      const CAE_T  = TERMINATION_T + CAE_PROPAGATION_DELAY; // 32
+
+      const pct = m => (m / TIMELINE_MAX) * 100 + '%';
+      const SESSION_FULL_PCT = (SESSION_COOKIE_LIFE / TIMELINE_MAX) * 100;
+      const SESSION_CUT_PCT  = (CAE_T / TIMELINE_MAX) * 100;
+
+      let terminated = false;
+      let caeOn = false;
+
+      function render() {
+        // Session bar width depends on CAE state once terminated
+        if (terminated && caeOn) {
+          sessionBar.style.width = SESSION_CUT_PCT + '%';
+        } else {
+          sessionBar.style.width = SESSION_FULL_PCT + '%';
+        }
+
+        // Event markers
+        evTerm.classList.toggle('visible', terminated);
+        evScim.classList.toggle('visible', terminated);
+        evCae.classList.toggle('visible', terminated && caeOn);
+
+        // Revocation gap strip
+        if (terminated) {
+          const endT = caeOn ? CAE_T : SESSION_COOKIE_LIFE;
+          gap.style.left  = pct(TERMINATION_T);
+          gap.style.width = ((endT - TERMINATION_T) / TIMELINE_MAX * 100) + '%';
+          gap.classList.add('visible');
+        } else {
+          gap.classList.remove('visible');
+        }
+
+        // Status panel + buttons
+        statusEl.classList.remove('bad', 'good');
+        if (!terminated) {
+          headlineEl.textContent = 'Login at t=0 — all tokens valid.';
+          detailEl.textContent = 'Press fire user to simulate termination, then toggle CAE to see how Continuous Access Evaluation collapses the gap.';
+          fireBtn.disabled = false;
+          fireBtn.textContent = 'fire user at t=30 min';
+        } else if (caeOn) {
+          statusEl.classList.add('good');
+          headlineEl.textContent = 'Revocation gap: ~2 minutes';
+          detailEl.textContent = 'User terminated at t=30. CAE pushed the event to GitHub within seconds; the session cookie was killed at t≈32. SCIM still runs its sync cycle at t=70, but the active session was already gone.';
+          fireBtn.disabled = true;
+          fireBtn.textContent = 'fired at t=30';
+        } else {
+          statusEl.classList.add('bad');
+          headlineEl.textContent = 'Revocation gap: 70 minutes';
+          detailEl.textContent = 'User terminated at t=30. SCIM deprovisions at t=70 (40-min sync cycle). But the session cookie remains valid until t=100. The user retains access for the entire 70-minute gap — long enough to push code, exfiltrate data, or sabotage a release.';
+          fireBtn.disabled = true;
+          fireBtn.textContent = 'fired at t=30';
+        }
+
+        caeBtn.classList.toggle('cae-on', caeOn);
+        caeBtn.textContent = caeOn ? 'CAE: on' : 'CAE: off';
+      }
+
+      function fireUser() {
+        if (terminated) return;
+        terminated = true;
+        render();
+      }
+
+      function toggleCae() {
+        caeOn = !caeOn;
+        render();
+      }
+
+      function reset() {
+        terminated = false;
+        caeOn = false;
+        render();
+      }
+
+      fireBtn.addEventListener('click', fireUser);
+      caeBtn.addEventListener('click', toggleCae);
+      resetBtn.addEventListener('click', reset);
+
+      render();
+    })();
+
+    // SCIM lifecycle widget — clock-driven event queue + sync drain
+    (function () {
+      const fleet = document.getElementById('scimFleet');
+      if (!fleet) return;
+
+      const meter        = document.getElementById('scimMeter');
+      const timeEl       = document.getElementById('scimTime');
+      const nextSyncEl   = document.getElementById('scimNextSync');
+      const queueCountEl = document.getElementById('scimQueueCount');
+      const queueListEl  = document.getElementById('scimQueueList');
+      const logEl        = document.getElementById('scimLog');
+      const playBtn      = document.getElementById('scimPlay');
+      const resetBtn     = document.getElementById('scimReset');
+
+      const NUM_CELLS = 20;
+      const TICK_MS = 250;           // 4 ticks per real second
+      const SIM_MIN_PER_TICK = 1;    // each tick = 1 sim minute → 4 sim min / real sec
+      const SYNC_INTERVAL_MIN = 40;  // 40 sim min = 10 real sec
+      const EVENT_MIN_INTERVAL = 3;  // min sim minutes between events
+      const EVENT_MAX_INTERVAL = 8;
+      const INITIAL_FILL = 8;        // cells pre-provisioned at start
+      const MAX_LOG_ENTRIES = 6;
+
+      const cells = [];
+
+      function buildCells() {
+        fleet.replaceChildren();
+        cells.length = 0;
+        for (let i = 0; i < NUM_CELLS; i++) {
+          const el = document.createElement('div');
+          el.className = 'cell';
+          const label = document.createElement('div');
+          label.className = 'label';
+          label.textContent = 'user-' + String(i + 1).padStart(2, '0');
+          const state = document.createElement('div');
+          state.className = 'state';
+          state.textContent = 'empty';
+          el.appendChild(label);
+          el.appendChild(state);
+          fleet.appendChild(el);
+          cells.push({ id: i + 1, el, stateEl: state, present: false });
+        }
+      }
+
+      function prefill() {
+        const idxs = [];
+        const pool = [];
+        for (let i = 0; i < NUM_CELLS; i++) pool.push(i);
+        for (let n = 0; n < INITIAL_FILL; n++) {
+          const k = Math.floor(Math.random() * pool.length);
+          idxs.push(pool.splice(k, 1)[0]);
+        }
+        idxs.forEach(i => {
+          cells[i].present = true;
+          cells[i].el.classList.add('ok');
+          cells[i].stateEl.textContent = 'provisioned';
+        });
+      }
+
+      let simTime = 0;
+      let nextSyncAt = SYNC_INTERVAL_MIN;
+      let nextEventAt = randEventInterval();
+      let queue = [];
+      let log = [];
+      let running = false;
+      let timer = null;
+
+      function randEventInterval() {
+        return EVENT_MIN_INTERVAL + Math.random() * (EVENT_MAX_INTERVAL - EVENT_MIN_INTERVAL);
+      }
+
+      function formatTime(mins) {
+        const h = Math.floor(mins / 60);
+        const m = Math.floor(mins % 60);
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      }
+
+      function generateEvent() {
+        const present = cells.filter(c => c.present);
+        const absent  = cells.filter(c => !c.present);
+        let type, cell;
+        if (present.length === 0) {
+          type = 'POST'; cell = absent[Math.floor(Math.random() * absent.length)];
+        } else if (absent.length === 0) {
+          type = Math.random() < 0.6 ? 'PATCH' : 'DELETE';
+          cell = present[Math.floor(Math.random() * present.length)];
+        } else {
+          const r = Math.random();
+          if (r < 0.35) { type = 'POST'; cell = absent[Math.floor(Math.random() * absent.length)]; }
+          else if (r < 0.80) { type = 'PATCH'; cell = present[Math.floor(Math.random() * present.length)]; }
+          else { type = 'DELETE'; cell = present[Math.floor(Math.random() * present.length)]; }
+        }
+        if (!cell) return null;
+
+        // Avoid queueing an event that contradicts an earlier queued event for the same cell
+        for (const q of queue) {
+          if (q.cell === cell) return null;
+        }
+        return { type, cell, queuedAt: simTime };
+      }
+
+      function tick() {
+        simTime += SIM_MIN_PER_TICK;
+
+        if (simTime >= nextEventAt) {
+          const evt = generateEvent();
+          if (evt) queue.push(evt);
+          nextEventAt = simTime + randEventInterval();
+        }
+
+        if (simTime >= nextSyncAt) {
+          drainQueue();
+          nextSyncAt = simTime + SYNC_INTERVAL_MIN;
+        }
+
+        renderMeter();
+        renderQueue();
+      }
+
+      function drainQueue() {
+        const events = queue.slice();
+        queue = [];
+
+        meter.classList.add('syncing');
+        fleet.classList.add('sync-firing');
+        setTimeout(() => {
+          meter.classList.remove('syncing');
+          fleet.classList.remove('sync-firing');
+        }, 400);
+
+        events.forEach((evt, i) => {
+          setTimeout(() => applyEvent(evt), i * 90);
+        });
+      }
+
+      function applyEvent(evt) {
+        const cell = evt.cell;
+        const el = cell.el;
+        const stateEl = cell.stateEl;
+
+        el.classList.remove('ok', 'checking', 'changing', 'fail');
+
+        const transientClass = evt.type === 'POST' ? 'checking'
+                             : evt.type === 'PATCH' ? 'changing'
+                             : 'fail';
+        const transientState = evt.type === 'POST' ? 'creating'
+                             : evt.type === 'PATCH' ? 'updating'
+                             : 'deprovisioning';
+        el.classList.add(transientClass);
+        stateEl.textContent = transientState;
+
+        setTimeout(() => {
+          el.classList.remove(transientClass);
+          if (evt.type === 'DELETE') {
+            cell.present = false;
+            stateEl.textContent = 'empty';
+          } else {
+            cell.present = true;
+            el.classList.add('ok');
+            stateEl.textContent = 'provisioned';
+          }
+        }, 600);
+
+        log.unshift({
+          type: evt.type,
+          time: formatTime(simTime),
+          user: 'user-' + String(cell.id).padStart(2, '0'),
+          delayMin: simTime - evt.queuedAt
+        });
+        if (log.length > MAX_LOG_ENTRIES) log.length = MAX_LOG_ENTRIES;
+        renderLog();
+      }
+
+      function renderMeter() {
+        timeEl.textContent = formatTime(simTime);
+        const left = Math.max(0, nextSyncAt - simTime);
+        nextSyncEl.textContent = Math.ceil(left) + ' min';
+        queueCountEl.textContent = String(queue.length);
+      }
+
+      function renderQueue() {
+        queueListEl.replaceChildren();
+        if (queue.length === 0) {
+          queueListEl.textContent = '— empty —';
+          return;
+        }
+        queue.forEach(evt => {
+          const chip = document.createElement('span');
+          chip.className = 'scim-qchip ' + evt.type.toLowerCase();
+          chip.textContent = evt.type + ' user-' + String(evt.cell.id).padStart(2, '0');
+          queueListEl.appendChild(chip);
+        });
+      }
+
+      function renderLog() {
+        logEl.replaceChildren();
+        if (log.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'log-empty';
+          empty.textContent = 'Press play. Events will appear here as each sync cycle drains the queue.';
+          logEl.appendChild(empty);
+          return;
+        }
+        log.forEach(entry => {
+          const row = document.createElement('div');
+          row.className = 'log-entry ' + entry.type.toLowerCase();
+          const t = document.createElement('span'); t.className = 'time'; t.textContent = 't=' + entry.time;
+          const m = document.createElement('span'); m.className = 'method'; m.textContent = entry.type;
+          const p = document.createElement('span'); p.className = 'path';
+          p.textContent = entry.type === 'POST' ? '/Users (' + entry.user + ')' : '/Users/' + entry.user;
+          const d = document.createElement('span'); d.className = 'delay';
+          d.textContent = 'queued ' + Math.round(entry.delayMin) + ' min earlier';
+          row.appendChild(t); row.appendChild(m); row.appendChild(p); row.appendChild(d);
+          logEl.appendChild(row);
+        });
+      }
+
+      function start() {
+        if (running) return;
+        running = true;
+        playBtn.textContent = 'pause';
+        timer = setInterval(tick, TICK_MS);
+      }
+
+      function stop() {
+        if (!running) return;
+        running = false;
+        playBtn.textContent = 'play';
+        if (timer) { clearInterval(timer); timer = null; }
+      }
+
+      function reset() {
+        stop();
+        simTime = 0;
+        nextSyncAt = SYNC_INTERVAL_MIN;
+        nextEventAt = randEventInterval();
+        queue = [];
+        log = [];
+        buildCells();
+        prefill();
+        renderMeter();
+        renderQueue();
+        renderLog();
+      }
+
+      playBtn.addEventListener('click', () => running ? stop() : start());
+      resetBtn.addEventListener('click', reset);
+
+      buildCells();
+      prefill();
+      renderMeter();
+      renderQueue();
+      renderLog();
+    })();
+
+    // Phishing simulator — side-by-side comparison of password vs FIDO2
+    (function () {
+      const pwCol = document.getElementById('phishPwCol');
+      if (!pwCol) return;
+
+      const f2Col   = document.getElementById('phishF2Col');
+      const segment = document.getElementById('phishScenario');
+      const pwDomain = document.getElementById('phishPwDomain');
+      const f2Domain = document.getElementById('phishF2Domain');
+      const pwSubmit = document.getElementById('phishPwSubmit');
+      const f2Submit = document.getElementById('phishF2Submit');
+      const pwOutcome = document.getElementById('phishPwOutcome');
+      const f2Outcome = document.getElementById('phishF2Outcome');
+      const pwText  = document.getElementById('phishPwText');
+      const f2Text  = document.getElementById('phishF2Text');
+      const resetBtn = document.getElementById('phishReset');
+
+      const LEGIT_DOMAIN = 'login.microsoftonline.com';
+      const PHISH_DOMAIN = 'evil-login.com';
+
+      const IDLE_PW = 'Press the button to submit credentials.';
+      const IDLE_F2 = 'Press the button to invoke the authenticator.';
+
+      const OUTCOMES = {
+        pw: {
+          legit: 'Credentials sent to Entra over TLS. MFA challenge succeeds. Login completes. (Note: still phishable if the user later types this password on a fake site.)',
+          phish: 'Credentials POSTed to evil-login.com. The attacker now has the password — and likely the MFA challenge response too, if they relay it in real time. Account compromised.'
+        },
+        f2: {
+          legit: 'Browser asks the authenticator to sign a challenge for login.microsoftonline.com. Authenticator finds the registered credential, signs with its private key, returns the signature. Login completes.',
+          phish: 'Browser asks the authenticator to sign a challenge bound to evil-login.com. No credential is registered for that origin. Authenticator refuses to respond. No data sent to the attacker. User is safe.'
+        }
+      };
+
+      let scenario = 'legit';
+      let pwSubmitted = false;
+      let f2Submitted = false;
+
+      function render() {
+        const isPhish = scenario === 'phish';
+        pwDomain.textContent = isPhish ? PHISH_DOMAIN : LEGIT_DOMAIN;
+        f2Domain.textContent = isPhish ? PHISH_DOMAIN : LEGIT_DOMAIN;
+        pwCol.classList.toggle('phishing', isPhish);
+        f2Col.classList.toggle('phishing', isPhish);
+
+        pwOutcome.classList.remove('success', 'failure');
+        f2Outcome.classList.remove('success', 'failure');
+
+        if (pwSubmitted) {
+          pwText.textContent = OUTCOMES.pw[scenario];
+          pwOutcome.classList.add(isPhish ? 'failure' : 'success');
+          pwSubmit.disabled = true;
+          pwSubmit.textContent = 'submitted';
+        } else {
+          pwText.textContent = IDLE_PW;
+          pwSubmit.disabled = false;
+          pwSubmit.textContent = 'submit credentials';
+        }
+
+        if (f2Submitted) {
+          f2Text.textContent = OUTCOMES.f2[scenario];
+          // FIDO2 is "success" in both scenarios — either it auths cleanly, or it
+          // refuses to respond (which is the right outcome from the user's standpoint).
+          f2Outcome.classList.add('success');
+          f2Submit.disabled = true;
+          f2Submit.textContent = isPhish ? 'refused by authenticator' : 'authenticator signed';
+        } else {
+          f2Text.textContent = IDLE_F2;
+          f2Submit.disabled = false;
+          f2Submit.textContent = 'tap security key';
+        }
+      }
+
+      function setScenario(s) {
+        if (scenario === s) return;
+        scenario = s;
+        pwSubmitted = false;
+        f2Submitted = false;
+        segment.querySelectorAll('button').forEach(b => {
+          b.classList.toggle('active', b.dataset.value === s);
+        });
+        render();
+      }
+
+      segment.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => setScenario(btn.dataset.value));
+      });
+
+      pwSubmit.addEventListener('click', () => { pwSubmitted = true; render(); });
+      f2Submit.addEventListener('click', () => { f2Submitted = true; render(); });
+
+      resetBtn.addEventListener('click', () => {
+        pwSubmitted = false;
+        f2Submitted = false;
+        render();
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>

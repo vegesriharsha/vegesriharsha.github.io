@@ -58,6 +58,13 @@ window.SITE_CONTENT = {
 
   visualizations: [
     {
+      title: "SCIM + OIDC identity federation — Entra ID to GitHub EMU",
+      slug: "scim-oidc-federation.html",
+      date: "2026-05-17",
+      summary: "Federating Microsoft Entra ID into GitHub Enterprise Managed Users — SCIM provisioning, OIDC + PKCE, Conditional Access, the revocation gap, FIDO2, and where SAML / WS-Fed sit alongside. Reference layer now; six interactive walkthroughs landing one at a time.",
+      tags: ["identity", "oidc", "scim", "security"]
+    },
+    {
       title: "Ansible — A Visual Primer for the Bank",
       slug: "ansible-visual-primer.html",
       date: "2026-05-15",
@@ -72,11 +79,11 @@ window.SITE_CONTENT = {
       tags: ["nim", "triton", "kubernetes"]
     },
     {
-      title: "L40S GPU & Triton — Multi-Model Serving",
-      slug: "gpu-multimodel-viz.html",
+      title: "NVIDIA L40S, inside the silicon — SMs, Tensor Cores, and how models share a GPU",
+      slug: "l40s-gpu-internals.html",
       date: "2026-05-10",
-      summary: "Interactive architecture diagram for serving multiple models on a single NVIDIA L40S GPU with Triton Inference Server.",
-      tags: ["gpu", "triton", "inference"]
+      summary: "What's a Streaming Multiprocessor? Where does 733 TFLOPS come from? How do multiple models actually share 142 SMs and 48 GB of VRAM? An interactive walk through L40S hardware — SMs, CUDA vs Tensor cores, VRAM layout, time-slicing.",
+      tags: ["gpu", "cuda", "hardware"]
     }
   ]
 };

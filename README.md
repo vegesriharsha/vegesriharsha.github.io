@@ -16,7 +16,7 @@ A static site hosted on GitHub Pages — a running notebook of notes and interac
 │   └── _template.html     # Copy this to start a new post
 ├── visualizations/        # Self-contained interactive HTML pages
 │   ├── ansible-visual-primer.html
-│   ├── gpu-multimodel-viz.html
+│   ├── l40s-gpu-internals.html
 │   ├── nim-triton-gpu-sharing.html
 │   └── VISUALIZATION_STYLE_GUIDE.md   # Spec for deep-dive technical viz (GPU/systems style)
 ├── assets/
@@ -93,7 +93,7 @@ The site has **two style guides**, layered:
 
 - **[`SITE_STYLE_GUIDE.md`](SITE_STYLE_GUIDE.md)** — required reading. Defines the shared visual language (palette, typography, header, footer, cards, buttons, stages, tabs, fleet cells) used on every page. The reference implementation is `visualizations/ansible-visual-primer.html`.
 
-- **[`visualizations/VISUALIZATION_STYLE_GUIDE.md`](visualizations/VISUALIZATION_STYLE_GUIDE.md)** — additional reading for deep-dive technical visualizations (animated cell grids of real GPU SMs, matrix sweeps, particle canvases, scheduler timelines). Used in `gpu-multimodel-viz.html` and `nim-triton-gpu-sharing.html`. Layers on top of the site guide.
+- **[`visualizations/VISUALIZATION_STYLE_GUIDE.md`](visualizations/VISUALIZATION_STYLE_GUIDE.md)** — additional reading for deep-dive technical visualizations (animated cell grids of real GPU SMs, matrix sweeps, particle canvases, scheduler timelines). Used in `l40s-gpu-internals.html` and `nim-triton-gpu-sharing.html`. Layers on top of the site guide.
 
 For most learning pages — interactive simulators, tabbed use cases, comparison demos — `SITE_STYLE_GUIDE.md` alone is enough.
 

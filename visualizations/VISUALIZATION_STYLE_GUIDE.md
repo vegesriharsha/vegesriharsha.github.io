@@ -1,6 +1,6 @@
 # Visualization Style Guide for Technical Learning Documents
 
-This document specifies the design system, structure, and animation patterns used in `gpu-multimodel-viz.html`. Other Claude sessions should follow this guide when producing new learning visualizations so the body of work stays visually consistent.
+This document specifies the design system, structure, and animation patterns used in `l40s-gpu-internals.html`. Other Claude sessions should follow this guide when producing new learning visualizations so the body of work stays visually consistent.
 
 The reference implementation lives in this repository. Read this spec **and** open the reference file before producing a new visualization — the file is the source of truth for anything ambiguous here.
 
@@ -446,7 +446,7 @@ Before presenting any new visualization, run these checks:
 
 ## 11. Reference file
 
-The canonical example is `gpu-multimodel-viz.html` in this repository. When in doubt about styling, animation timing, color choice, or layout, **read the reference file** rather than guessing. It is the source of truth.
+The canonical example is `l40s-gpu-internals.html` in this repository. When in doubt about styling, animation timing, color choice, or layout, **read the reference file** rather than guessing. It is the source of truth.
 
 Specifically these sections demonstrate each pattern:
 

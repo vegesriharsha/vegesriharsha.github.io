@@ -2,7 +2,7 @@
 
 This is the **site-wide** design system. Every page on `my-learnings` — home, about, posts, visualizations, 404 — must follow it so the body of work feels like one site, not a folder of accumulated experiments.
 
-If you're building a heavy interactive deep-dive (the kind with cell grids, matrix sweeps, particle canvases — like `gpu-multimodel-viz.html`), also read `visualizations/VISUALIZATION_STYLE_GUIDE.md`. That guide layers domain-specific patterns on top of this one.
+If you're building a heavy interactive deep-dive (the kind with cell grids, matrix sweeps, particle canvases — like `l40s-gpu-internals.html`), also read `visualizations/VISUALIZATION_STYLE_GUIDE.md`. That guide layers domain-specific patterns on top of this one.
 
 The reference implementation is **`visualizations/ansible-visual-primer.html`**. When in doubt, open that file.
 
@@ -393,7 +393,7 @@ A few patterns explicitly avoided on this site:
 
 `SITE_STYLE_GUIDE.md` (this file) covers the **shared visual language** — colors, typography, header, footer, cards, buttons, layout — that every page must follow.
 
-`visualizations/VISUALIZATION_STYLE_GUIDE.md` covers the **deep-dive technical visualization** patterns — animated cell grids representing real GPU SMs, matrix sweeps showing dot-product structure, canvas particle flows, scheduler timelines — used in `gpu-multimodel-viz.html` and `nim-triton-gpu-sharing.html`.
+`visualizations/VISUALIZATION_STYLE_GUIDE.md` covers the **deep-dive technical visualization** patterns — animated cell grids representing real GPU SMs, matrix sweeps showing dot-product structure, canvas particle flows, scheduler timelines — used in `l40s-gpu-internals.html` and `nim-triton-gpu-sharing.html`.
 
 Use this guide always. Use the visualization guide additionally when building that style of pixel-level systems explainer.
 
