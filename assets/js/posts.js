@@ -121,4 +121,15 @@ window.SITE_CONTENT = {
     if (!root) return;
     if (!items || items.length === 0) {
       root.innerHTML = '<div class="empty">Nothing here yet — add an entry in <code>assets/js/posts.js</code>.</div>';
- 
+      return;
+    }
+    var sorted = items.slice().sort(byDateDesc);
+    root.innerHTML = sorted.map(function (i) { return cardHtml(i, kind, folder); }).join("");
+  }
+  window.renderSite = function () {
+    var c = window.SITE_CONTENT || { posts: [], visualizations: [] };
+    renderInto("posts-grid", c.posts, "note", "posts");
+    renderInto("viz-grid", c.visualizations, "viz", "visualizations");
+  };
+  document.addEventListener("DOMContentLoaded", window.renderSite);
+})();
