@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitLab → GitHub Migration — Architecture &amp; Access Governance Reference — my-learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/css/base.css" />
+<link rel="stylesheet" href="../assets/css/doc.css" />
+<style>
+/* Page-specific bits not in doc.css — lift to components.css if reused.
+   Every colour resolves to a base.css token; no hardcoded hex. */
+.doc-layout .callout.rust { background: var(--acc-1-soft); border-left-color: var(--acc-1); }
+.doc-layout .callout.rust .label { color: var(--acc-1); }
+
+.doc-layout .chain {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 18px; margin: 1.6rem 0;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.doc-layout .chain .node {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
+  padding: 7px 11px; font-weight: 500; color: var(--text); white-space: nowrap;
+}
+.doc-layout .chain .node.rust { background: var(--acc-1-soft); border-color: var(--acc-1); color: var(--text-strong); }
+.doc-layout .chain .arrow { color: var(--acc-1); font-weight: 700; }
+
+.doc-layout .tag {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  font-weight: 700; padding: 2px 7px; border-radius: 4px;
+}
+.doc-layout .tag.t1 { background: var(--acc-3-soft); color: var(--acc-3); }
+.doc-layout .tag.t2 { background: var(--acc-4-soft); color: var(--acc-4); }
+.doc-layout .tag.t3 { background: var(--acc-5-soft); color: var(--acc-5); }
+
+.doc-layout .svg-bg-accent { fill: var(--acc-1-soft); stroke: var(--acc-1); stroke-width: 1.2; }
+.doc-layout .svg-arrow-gold { stroke: var(--acc-2); stroke-width: 1.5; fill: none; }
+.doc-layout .mk-rust { fill: var(--acc-1); }
+.doc-layout .mk-gold { fill: var(--acc-2); }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a class="logo" href="../" style="text-decoration:none">
+      <div class="logo-top">my · learnings</div>
+      <div class="logo-main">notes <span>&amp;</span> viz</div>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../">Home</a>
+      <a href="../#posts" class="active">Notes</a>
+      <a href="../#viz">Visualizations</a>
+      <a href="../about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="doc-layout">
+
+<nav class="sticky">
+  <div class="brand">GitHub Migration</div>
+  <div class="brand-sub">FHLB · GitLab → GitHub</div>
+  <ol>
+    <li><a href="#decisions">Two structural choices</a></li>
+    <li><a href="#single-org">Why a single org</a></li>
+    <li><a href="#noread">No default read</a></li>
+    <li><a href="#chain">The access chain</a></li>
+    <li><a href="#teams">Teams &amp; group design</a></li>
+    <li><a href="#appdev">Two app-dev teams in practice</a></li>
+    <li><a href="#iac">IaC: policy repo &amp; factory</a></li>
+    <li><a href="#innersource">Shared libraries &amp; inner source</a></li>
+    <li><a href="#controls">Controls: forking, signing, roles</a></li>
+    <li><a href="#rulesets">Policy &amp; rulesets reference</a></li>
+    <li><a href="#day2">Open questions &amp; next steps</a></li>
+  </ol>
+</nav>
+
+<main>
+  <div class="eyebrow">Architecture Reference · Platform Engineering</div>
+  <h1>GitLab → GitHub: <em>org structure</em> &amp; access governance</h1>
+  <p class="lede">A working reference for the GitLab → GitHub move: the org structure, the reasoning behind each choice, and the full access model — from an Identity IQ request all the way to a permission on a repository. Written for app dev and platform engineering teams to build one shared mental model of how access works.</p>
+  <div class="meta">
+    <span>Estate<strong>~100 IT staff · single org</strong></span>
+    <span>Identity<strong>Identity IQ → Entra → SCIM → Teams</strong></span>
+    <span>Enforcement<strong>Terraform IaC</strong></span>
+  </div>
+
+  <!-- ===================== SECTION 1 ===================== -->
+  <section id="decisions">
+    <div class="section-num">§ 01</div>
+    <h2>Two structural choices, up front</h2>
+    <p>Two structural choices shape everything else in this document. Get these two clear first and the rest of the access model follows naturally — so they are worth understanding before anything else.</p>
+
+    <div class="decision">
+      <div class="head">Decision 1 — Single organization</div>
+      <div class="head teal">Decision 2 — No default read</div>
+      <div>
+        <ul>
+          <li>One GitHub org for the whole internal estate</li>
+          <li>Not split by department (app dev, infra, DBA, dev ops, networking, info sec)</li>
+          <li>Departments are modeled as <strong>teams</strong>, not orgs</li>
+          <li>Small scoped extra orgs allowed later (OSS, sandbox)</li>
+        </ul>
+      </div>
+      <div>
+        <ul>
+          <li>Org base permission set to <code>none</code></li>
+          <li>No implicit read from org membership</li>
+          <li>Read and read/write are explicit team grants</li>
+          <li>All repositories <strong>private</strong></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="label">The through-line</div>
+      <p>A single, well-governed org with explicit least-privilege access, governed end-to-end through Identity IQ, with Infrastructure-as-Code as the enforcement mechanism. The two decisions are in mild tension — strict no-read can dampen cross-team AI context — and the access model below is designed specifically to resolve that tension through deliberate, coarse-grained read grants rather than implicit org-wide read.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 2 ===================== -->
+  <section id="single-org">
+    <div class="section-num">§ 02</div>
+    <h2>Why a single organization</h2>
+    <p>The instinct to split by department feels like stronger isolation. At our scale it is the wrong primitive. A single org keeps identity, policy, and AI tooling in one place; multiple orgs would mean running and reconciling that same machinery N times — for no governance benefit we can't get inside one org.</p>
+
+    <h3>The cost of running the machinery N times</h3>
+    <table class="cmp">
+      <tr><th style="width:30%">Cost</th><th>Why it hurts at our scale</th></tr>
+      <tr><td><strong>Operational overhead</strong></td><td>SCIM itself is <em>not</em> the cost — a single SCIM integration from Entra provisions users across every org in the enterprise, so you do not run a separate connection per org. The real overhead is GitHub Teams, which do not span orgs: the same logical group becomes parallel teams maintained in lockstep across orgs, and CODEOWNERS in one org can only reference that org's teams. That is extra automation to keep Entra-group-to-team mappings in sync, and more surface area to drift. A single org is one team structure with nothing to reconcile.</td></tr>
+      <tr><td><strong>Licensing cost</strong></td><td>Base GitHub Enterprise licensing consolidates across orgs under one enterprise account, and Copilot is billed once per <em>unique</em> user at the enterprise level even when seats are assigned in several orgs — so multi-org does not multiply licence cost for the same engineer. Licensing is therefore a weak argument either way; the real multi-org costs are operational, not per-seat. Worth knowing, so the choice isn't made on a cost that mostly isn't there.</td></tr>
+      <tr><td><strong>AI context boundary</strong></td><td>Copilot and code-search context is simplest and most reliable inside a single org. Cross-org context — drawing on repos a user can read in a <em>separate</em> org — is not something to count on: indexing and context features are organized around the org, so a multi-org split risks fragmenting the AI context teams expect to feel seamless. One org keeps the context boundary aligned with the read boundary you actually manage.</td></tr>
+      <tr><td><strong>Policy re-implemented</strong></td><td>Rulesets, security defaults, custom properties, and runner groups are org-scoped — none inherit across orgs. One org sets required reviews, signed commits, and branch protection once and targets by pattern or property. N orgs maintain the same policy N times, and it drifts.</td></tr>
+      <tr><td><strong>Audit multiplied</strong></td><td>"Who can read a given repo," "what can this person reach," "the grants to recertify" are answered within an org. One org is one access-review cycle, one audit-log stream, one policy definition aligned to the Entra/IIQ groups. N orgs is N of each, reconciled by hand. Auditors prefer one well-controlled org over several loosely-coordinated ones.</td></tr>
+    </table>
+
+    <div class="callout teal">
+      <div class="label">The compliance angle runs the other way</div>
+      <p>The intuitive argument is "separate orgs = stronger isolation = better audit." For SOX the reality is the opposite: a single org with rulesets, custom properties, environments, and CODEOWNERS gives stronger, more auditable controls in one place. Auditors prefer one well-controlled org over several loosely-coordinated ones. The isolation a regulated estate needs is delivered by <strong>private visibility + explicit team grants</strong> inside one org — same boundary, less overhead.</p>
+    </div>
+
+    <h3>When a second org is actually justified</h3>
+    <p>To be clear, real cases for a second org do exist — none of which apply to us today. Separate legal entities; a public-facing OSS org (the external face, kept apart from internal code); M&amp;A integration; massive scale; or a disposable sandbox for training and experiments. A defensible future topology is at most three orgs — <code>fhlb</code> (main internal), <code>fhlb-opensource</code> (if we ever publish), <code>fhlb-sandbox</code> (optional) — with the main org being the unified one where IaC, the repo factory, and AI tooling converge.</p>
+  </section>
+
+  <!-- ===================== SECTION 3 ===================== -->
+  <section id="noread">
+    <div class="section-num">§ 03</div>
+    <h2>No default read — the deliberate trade-off</h2>
+    <p>Org base permission is <code>none</code>. Membership in the org confers nothing; every read and every write is an explicit, requested, reviewable grant. All repositories are private. This is the maximalist least-privilege posture, and it is defensible for a SOX-regulated bank — but it is a genuine trade-off, not a free win, and the model only stays sustainable if implemented carefully.</p>
+
+    <h3>What we gain</h3>
+    <ul>
+      <li><strong>A clean audit answer</strong> to "who can see this repository" for every repo, including read.</li>
+      <li><strong>One consistent model</strong> across the whole estate — no carve-outs to reason about during access review.</li>
+      <li><strong>Coherence with private visibility.</strong> Internal visibility would contradict the posture (enabling org-wide read at the visibility layer while disabling it at the permission layer). Private is the consistent choice and lets us cleanly disable forking.</li>
+    </ul>
+
+    <h3>What we accepted — and how we recover it</h3>
+    <p>Copilot Enterprise and Code Search draw context only from repos a user can <em>read</em>. With base <code>none</code>, a developer's AI assistance is, by default, scoped to their own domain. Left unmanaged, this measurably dampens the AI investment — the most likely source of "why isn't Copilot as useful as the demo?" six months in.</p>
+
+    <div class="callout rust">
+      <div class="label">The resolution</div>
+      <p>We recover cross-domain AI context through <strong>deliberate, coarse-grained read grants</strong> — standing read groups at the granularity of a team's whole repo set, requestable through Identity IQ — rather than implicit org-wide read. This keeps the audit story intact (nothing is implicit; every path is in IIQ) while giving the AI tooling the breadth it needs. The danger to avoid is letting "no default read" quietly collapse into "per-repo access request for everything," which is the unsustainable model we explicitly rejected. Read grants stay at team-repo-set granularity; per-repo grants are reserved for the genuinely sensitive tier.</p>
+    </div>
+
+    <h3>Tiering keeps friction proportional</h3>
+    <table class="cmp">
+      <tr><th style="width:20%">Tier</th><th>What's in it</th><th>How access works</th></tr>
+      <tr><td><span class="tag t1">Tier 1</span></td><td>Ordinary application code, shared libraries, reusable IaC modules (~80%)</td><td>Standing team grants; broad read easily requestable; fast self-service</td></tr>
+      <tr><td><span class="tag t2">Tier 2</span></td><td>SOX-critical reporting, PII handling, environment-specific IaC (~15%)</td><td>Per-team grants, justification on request, tighter recert cadence</td></tr>
+      <tr><td><span class="tag t3">Tier 3</span></td><td>Examiner findings, IR, M&amp;A, secret-adjacent infra (~5%)</td><td>Per-repo groups, JIT elevation via Entra PIM, strict approval</td></tr>
+    </table>
+  </section>
+
+  <!-- ===================== SECTION 4 ===================== -->
+  <section id="chain">
+    <div class="section-num">§ 04</div>
+    <h2>The access chain, end to end</h2>
+    <p>Access flows through a deliberate chain of layers, beginning in tooling already inside our audit scope. Each layer has exactly one responsibility. This is the section most worth internalizing — once app dev and platform engineering read this diagram the same way, the rest of the model is just detail.</p>
+
+    <div class="chain">
+      <span class="node">Employee</span><span class="arrow">→</span>
+      <span class="node rust">Identity IQ</span><span class="arrow">→</span>
+      <span class="node">Entra ID group</span><span class="arrow">→</span>
+      <span class="node">SCIM</span><span class="arrow">→</span>
+      <span class="node">GitHub account</span><span class="arrow">→</span>
+      <span class="node rust">GitHub Team</span><span class="arrow">→</span>
+      <span class="node">Repo permission</span>
+    </div>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 360" xmlns="http://www.w3.org/2000/svg">
+        <text class="svg-label-small" x="20" y="28">REQUEST FLOWS LEFT TO RIGHT · EACH LAYER HAS ONE JOB · NOTHING IS IMPLICIT</text>
+
+        <!-- Layer 1: IIQ -->
+        <rect class="svg-bg-accent" x="20" y="60" width="140" height="90" rx="4"/>
+        <text class="svg-label-major" x="90" y="92" text-anchor="middle">Identity IQ</text>
+        <text class="svg-label-small" x="90" y="110" text-anchor="middle">request · approve</text>
+        <text class="svg-label-small" x="90" y="124" text-anchor="middle">recertify</text>
+        <text class="svg-label-small" x="90" y="138" text-anchor="middle">(in audit scope)</text>
+
+        <path class="svg-arrow-rust" d="M162 105 L198 105" marker-end="url(#ar)"/>
+
+        <!-- Layer 2: Entra -->
+        <rect class="svg-bg-external" x="200" y="60" width="140" height="90" rx="4"/>
+        <text class="svg-label-major" x="270" y="92" text-anchor="middle">Entra ID</text>
+        <text class="svg-label-small" x="270" y="110" text-anchor="middle">security group</text>
+        <text class="svg-label-small" x="270" y="124" text-anchor="middle">who belongs</text>
+        <text class="svg-label-small" x="270" y="138" text-anchor="middle">to what</text>
+
+        <path class="svg-arrow-rust" d="M342 105 L378 105" marker-end="url(#ar)"/>
+
+        <!-- Layer 3: SCIM -->
+        <rect class="svg-bg-container" x="380" y="60" width="120" height="90" rx="4"/>
+        <text class="svg-label-major" x="440" y="92" text-anchor="middle">SCIM</text>
+        <text class="svg-label-small" x="440" y="110" text-anchor="middle">provision /</text>
+        <text class="svg-label-small" x="440" y="124" text-anchor="middle">deprovision</text>
+        <text class="svg-label-small" x="440" y="138" text-anchor="middle">auto-sync</text>
+
+        <path class="svg-arrow-rust" d="M502 105 L538 105" marker-end="url(#ar)"/>
+
+        <!-- Layer 4: Team -->
+        <rect class="svg-bg-pod" x="540" y="60" width="120" height="90" rx="4"/>
+        <text class="svg-label-major" x="600" y="92" text-anchor="middle">GitHub Team</text>
+        <text class="svg-label-small" x="600" y="110" text-anchor="middle">CODEOWNERS</text>
+        <text class="svg-label-small" x="600" y="124" text-anchor="middle">@mention</text>
+        <text class="svg-label-small" x="600" y="138" text-anchor="middle">carries perms</text>
+
+        <path class="svg-arrow-rust" d="M662 105 L698 105" marker-end="url(#ar)"/>
+
+        <!-- Layer 5: Repo -->
+        <rect class="svg-bg-external" x="700" y="60" width="100" height="90" rx="4"/>
+        <text class="svg-label-major" x="750" y="92" text-anchor="middle">Repo</text>
+        <text class="svg-label-small" x="750" y="110" text-anchor="middle">read OR</text>
+        <text class="svg-label-small" x="750" y="124" text-anchor="middle">read/write</text>
+        <text class="svg-label-small" x="750" y="138" text-anchor="middle">explicit grant</text>
+
+        <!-- Deprovision return path -->
+        <path class="svg-arrow-gold" d="M90 152 L90 220 L750 220 L750 152" marker-end="url(#ag)" stroke-dasharray="4 3"/>
+        <text class="svg-label-mono" x="420" y="214" text-anchor="middle">leaver removed in IIQ → flows through Entra + SCIM → GitHub access revoked automatically</text>
+
+        <!-- Terraform binding band -->
+        <rect class="svg-bg-ns" x="380" y="260" width="420" height="60" rx="4"/>
+        <text class="svg-label-small" x="395" y="280">TERRAFORM (org-policy repo)</text>
+        <text class="svg-label" x="395" y="300">binds Entra group → Team, and Team → repo permission</text>
+        <text class="svg-label-small" x="395" y="314">declarative · reviewed PR · drift-detected nightly</text>
+        <path class="svg-arrow-gold" d="M590 260 L600 152" marker-end="url(#ag)"/>
+        <path class="svg-arrow-gold" d="M700 290 L750 152" marker-end="url(#ag)"/>
+
+        <defs>
+          <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path class="mk-rust" d="M0,0 L7,3 L0,6 Z"/>
+          </marker>
+          <marker id="ag" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path class="mk-gold" d="M0,0 L7,3 L0,6 Z"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 01 · The full access chain — request to repository permission, with automatic deprovisioning</div>
+    </div>
+
+    <table class="cmp">
+      <tr><th>The governance view</th><th>The developer view</th></tr>
+      <tr><td>Every access path is explicit, requested and approved in IIQ, recorded in Entra, recertified on the existing cadence. "Who can read repo X" is answered by the teams explicitly granted access — within tooling already under audit. There is no implicit access anywhere.</td><td>You don't file a GitHub ticket per repo. You request the right group in IIQ once, and your team's repository access follows. Cross-domain work is a scoped IIQ request, not a renegotiation of your identity.</td></tr>
+    </table>
+  </section>
+
+  <!-- ===================== SECTION 5 ===================== -->
+  <section id="teams">
+    <div class="section-num">§ 05</div>
+    <h2>Teams and group design</h2>
+    <p>GitHub has no equivalent of GitLab "groups." The org is flat — repos live directly under it, with no subgroups. Coming from GitLab this is the biggest mental shift. What replaces groups is three orthogonal axes, stitched together by Terraform.</p>
+
+    <div class="ns-grid">
+      <div>Teams</div>
+      <div>The <strong>people</strong> axis. GitHub's native access and collaboration primitive. Teams nest (parent/child), carry repo permissions, and are what CODEOWNERS routes review to. An Entra group maps 1:1 to a Team.</div>
+      <div>Naming + topics + custom properties</div>
+      <div>The <strong>classification</strong> axis. Predictable name prefixes, topics (<code>sox-critical</code>, <code>pii</code>), and key/value custom properties (<code>domain=data</code>, <code>tier=2</code>) describe what a repo <em>is</em>.</div>
+      <div>Rulesets</div>
+      <div>The <strong>policy</strong> axis. Org-level rules that target repos by name pattern or custom property — required reviews, signed commits, required checks — without moving repos around.</div>
+    </div>
+
+    <h3>Why teams, not AD groups, are the GitHub-side primitive</h3>
+    <p>The chain is three layers: Entra group → GitHub Team → repo access. You never grant an Entra group access to a repo directly. The Entra group is the source of truth for <em>who is on the team</em>; the Team is the source of truth for <em>what the team can do</em>. Teams matter because they are the unit of CODEOWNERS routing, they nest (the closest thing to GitLab groups), they hold discussions and @mentions, and one team grant covers many members where direct collaborator grants would each need reconciliation.</p>
+
+    <div class="callout">
+      <div class="label">Naming convention is load-bearing</div>
+      <p>Because the org is flat, naming discipline does the work GitLab groups did. Name repos by <strong>system, not team</strong> (<code>examination-tracker</code>, not <code>frontoffice-tracker</code>) — systems outlive org charts. Use custom properties for the relationships (<code>primary_domain</code>, <code>contributing_teams</code>, <code>tier</code>) so a reorg never forces a rename. CODEOWNERS handles review routing across multiple owning teams.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 6 ===================== -->
+  <section id="appdev">
+    <div class="section-num">§ 06</div>
+    <h2>Two app-dev teams, in practice</h2>
+    <p>The concrete layout for our two app dev teams plus shared assets. This is where the coarse-grained read model recovers the AI context that base <code>none</code> would otherwise cost us.</p>
+
+    <div class="callout">
+      <div class="label">Two different AI boundaries — don't conflate them</div>
+      <p>This document discusses AI context limits in two places, and they are distinct. In §02 the boundary is the <strong>org boundary</strong> — Copilot and code search are organized around the org, and cross-org context is not something to rely on, which is one reason to keep everything in a single org. Here the boundary is the <strong>read-permission boundary</strong> — within our one org, Copilot context is the set of repos a user can read, and base <code>none</code> narrows that to a user's own domain by default. The coarse-grained read grants below widen the read boundary deliberately; they have nothing to do with the org boundary, which a single org already resolves.</p>
+    </div>
+
+    <pre data-lang="groups / teams"><span class="c"># GitHub Teams — the permission-bearing primitive</span>
+<span class="k">fhlb-appdev-a</span>            <span class="c"># read/write on A's repos</span>
+<span class="k">fhlb-appdev-b</span>            <span class="c"># read/write on B's repos</span>
+<span class="k">fhlb-iac</span>                 <span class="c"># read/write on IaC repos (owners)</span>
+
+<span class="c"># Entra groups requestable via Identity IQ</span>
+<span class="s">FHLB-GH-AppDevA-Write</span>    <span class="c"># A's members — write on A</span>
+<span class="s">FHLB-GH-AppDevB-Write</span>    <span class="c"># B's members — write on B</span>
+<span class="s">FHLB-GH-AppDevA-Read</span>     <span class="c"># requestable by B — read on A</span>
+<span class="s">FHLB-GH-AppDevB-Read</span>     <span class="c"># requestable by A — read on B</span>
+<span class="s">FHLB-GH-IaC-Read</span>         <span class="c"># shareable IaC modules — broad read</span>
+<span class="s">FHLB-GH-IaC-Sensitive-Read</span> <span class="c"># env-specific IaC — tighter, justified</span>
+<span class="s">FHLB-GH-RepoFactory-Write</span> <span class="c"># dev community — "can open PRs"</span></pre>
+
+    <h3>The standing grants</h3>
+    <ul>
+      <li>Each app dev team holds read/write on its <strong>own</strong> repos via its write group.</li>
+      <li>Each team holds <strong>read on the other team's</strong> repos via a separate read group — restoring mutual Copilot / Code Search context across both app dev teams.</li>
+      <li>Engineers can request <strong>read on shareable IaC</strong> (modules, patterns). Environment-specific and secret-adjacent IaC stays in a tighter group.</li>
+      <li>Cross-team read grants are at the <strong>team's whole-repo-set</strong> granularity — one group covers all of a team's repos, and new repos created through the factory inherit the grant automatically. No new group per repo.</li>
+    </ul>
+
+    <div class="callout rust">
+      <div class="label">The IaC read grant is the one to scrutinize</div>
+      <p>Two app dev teams reading each other is low risk — peer application code. Blanket read on <strong>all</strong> IaC is not: those repos concentrate environment topology, backend config, and sometimes secrets. Split shareable IaC (broad read) from environment-specific / secret-adjacent IaC (tight, justified read). And get secrets out of code regardless — remote state with its own access control, values in Key Vault/Vault referenced by identity, secret scanning + push protection on the org, and a migration-time sweep for existing secrets inherited from GitLab. Clean repos make broad read defensible under security review.</p>
+    </div>
+
+    <div class="callout teal">
+      <div class="label">The load-bearing dependency</div>
+      <p>This whole model assumes Identity IQ self-service is fast. If a cross-team read request clears in minutes-to-hours, the model is comfortable. If it is a multi-day approval, friction returns and people route around it (snippets into chat, code into external LLMs). <strong>IAM team to confirm expected IIQ turnaround</strong> — it is the single most important thing to verify, because the architecture is only as good as the request latency beneath it.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 7 ===================== -->
+  <section id="iac">
+    <div class="section-num">§ 07</div>
+    <h2>Infrastructure-as-Code: two foundational repositories</h2>
+    <p>Everything above is enforced, not aspirational, because two Terraform-managed repositories own the configuration. This is also what kills "click ops" and lets us disable the "create repository" button across the org.</p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 820 340" xmlns="http://www.w3.org/2000/svg">
+        <text class="svg-label-small" x="20" y="28">DEVELOPER PR → REVIEW → TERRAFORM APPLY (GitHub App) → GITHUB STATE</text>
+
+        <!-- Developer -->
+        <rect class="svg-bg-external" x="20" y="120" width="110" height="70" rx="4"/>
+        <text class="svg-label-major" x="75" y="150" text-anchor="middle">Developer</text>
+        <text class="svg-label-small" x="75" y="168" text-anchor="middle">opens PR</text>
+
+        <path class="svg-arrow-rust" d="M132 155 L188 155" marker-end="url(#af)"/>
+
+        <!-- Two repos -->
+        <rect class="svg-bg-pod" x="190" y="60" width="240" height="80" rx="4"/>
+        <text class="svg-label-major" x="310" y="90" text-anchor="middle">org-policy repo</text>
+        <text class="svg-label-small" x="310" y="108" text-anchor="middle">base perms · rulesets · teams</text>
+        <text class="svg-label-small" x="310" y="122" text-anchor="middle">custom properties · grants</text>
+
+        <rect class="svg-bg-pod" x="190" y="170" width="240" height="80" rx="4"/>
+        <text class="svg-label-major" x="310" y="200" text-anchor="middle">repo factory</text>
+        <text class="svg-label-small" x="310" y="218" text-anchor="middle">module: visibility · ruleset</text>
+        <text class="svg-label-small" x="310" y="232" text-anchor="middle">CODEOWNERS · team grants</text>
+
+        <!-- Review gate -->
+        <rect class="svg-bg-accent" x="460" y="115" width="120" height="80" rx="4"/>
+        <text class="svg-label-major" x="520" y="145" text-anchor="middle">Review gate</text>
+        <text class="svg-label-small" x="520" y="163" text-anchor="middle">CODEOWNERS</text>
+        <text class="svg-label-small" x="520" y="177" text-anchor="middle">terraform plan</text>
+
+        <path class="svg-arrow-rust" d="M432 110 L458 145" marker-end="url(#af)"/>
+        <path class="svg-arrow-rust" d="M432 205 L458 165" marker-end="url(#af)"/>
+        <path class="svg-arrow-rust" d="M582 155 L618 155" marker-end="url(#af)"/>
+
+        <!-- GitHub App apply -->
+        <rect class="svg-bg-container" x="620" y="115" width="120" height="80" rx="4"/>
+        <text class="svg-label-major" x="680" y="140" text-anchor="middle">GitHub App</text>
+        <text class="svg-label-small" x="680" y="158" text-anchor="middle">terraform apply</text>
+        <text class="svg-label-small" x="680" y="172" text-anchor="middle">OIDC · short-lived</text>
+        <text class="svg-label-small" x="680" y="186" text-anchor="middle">only creator of repos</text>
+
+        <!-- Drift -->
+        <rect class="svg-bg-ns" x="190" y="280" width="550" height="44" rx="4"/>
+        <text class="svg-label-small" x="205" y="300">NIGHTLY DRIFT DETECTION</text>
+        <text class="svg-label" x="205" y="316">terraform plan flags anything changed in the UI — auditor-grade change evidence</text>
+
+        <defs>
+          <marker id="af" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path class="mk-rust" d="M0,0 L7,3 L0,6 Z"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 02 · Repository creation and policy as reviewed pull requests, applied by automation</div>
+    </div>
+
+    <div class="ns-grid">
+      <div>org-policy repo</div>
+      <div>Single source of truth for org-level configuration: base permission <code>none</code>, security defaults, organization rulesets, custom properties, team definitions, and team-to-repository grants. Reviewed PR, auditable history. Replaces manual UI configuration.</div>
+      <div>repo factory</div>
+      <div>A Terraform module and self-service pattern. Takes <code>domain</code> and <code>tier</code> as inputs and provisions a repository with consistent, pre-approved configuration — rulesets, branch protection, required reviews, CODEOWNERS, secret scanning, push protection, and the correct team grants — applied on creation.</div>
+    </div>
+
+    <h3>Disabling the "create repository" button</h3>
+    <p>This is the keystone. If developers can create repos in the UI, the registry is meaningless and drift fills it with unmanaged, inconsistently-secured repos within a quarter.</p>
+
+    <pre data-lang="terraform"><span class="k">resource</span> <span class="s">"github_organization_settings"</span> <span class="s">"fhlb"</span> {
+  <span class="k">members_can_create_repositories</span>          = <span class="n">false</span>  <span class="c"># master switch</span>
+  <span class="k">members_can_create_private_repositories</span>  = <span class="n">false</span>
+  <span class="k">members_can_create_internal_repositories</span> = <span class="n">false</span>
+  <span class="k">members_can_create_public_repositories</span>   = <span class="n">false</span>
+  <span class="k">members_can_fork_private_repositories</span>    = <span class="n">false</span>  <span class="c"># see §09</span>
+}</pre>
+
+    <p>With creation disabled, only the GitHub App (acting as an org-level integration) can create repos — through the reviewed PR flow. A small break-glass owner group, accessed via Entra PIM with approval, exists for emergencies only. Every repo that exists has a corresponding file in the factory with a git history showing who proposed it, who approved it, and when.</p>
+
+    <div class="callout teal">
+      <div class="label">The audit story</div>
+      <p>There is no shadow-repo path. Every repository is consistently configured, every creation is reviewed and recorded, and nightly drift detection catches anything that escaped. This is a stronger control than a per-repo ticket queue because it is mechanically enforced rather than process-enforced — and the evidence is the git history of the config repos, which auditors can read directly.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 8 ===================== -->
+  <section id="innersource">
+    <div class="section-num">§ 08</div>
+    <h2>Shared libraries &amp; the inner-source pattern</h2>
+    <p>The repo factory is the most visible instance of a general pattern that also governs shared libraries — internal SDKs, common utilities, Terraform module registries. The shape is the same: <strong>broad read, broad propose, narrow merge.</strong></p>
+
+    <div class="decision">
+      <div class="head">Wide — read &amp; propose</div>
+      <div class="head teal">Narrow — merge &amp; release</div>
+      <div>
+        <ul>
+          <li>Anyone who might consume the library can read it (and gets Copilot context)</li>
+          <li>Any engineer can branch and open a PR — write grants "can open PRs", not merge</li>
+          <li>Requestable through IIQ, fast approval, low risk</li>
+        </ul>
+      </div>
+      <div>
+        <ul>
+          <li><code>main</code> protected by org-level ruleset; required reviews + checks</li>
+          <li>Code-owner review routed to the existing <strong>write team</strong> — no separate maintainer role</li>
+          <li>Release-to-registry behind a protected environment</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>No per-repo admin or maintainer — the write team stewards</h3>
+    <p>We deliberately do <strong>not</strong> create per-repo admin or maintainer groups. They are sprawl, and each one is a person who can quietly disable a control. Stewardship is split between the existing write team and Terraform, so no human holds standing admin on any repo.</p>
+
+    <p>The key clarification: <strong>CODEOWNERS does not block anything on its own</strong> — it only auto-requests review from the listed owners. What blocks an unreviewed merge is the <em>org-level ruleset</em> setting "require review from Code Owners." The two work together. So the mechanism is three parts, not one:</p>
+
+    <div class="ns-grid">
+      <div>Org-level ruleset</div>
+      <div>The technical gate. <code>main</code> requires a PR, requires code-owner review, and forbids bypass. Lives in the org-policy repo, applied by Terraform, targeted by repo pattern/property — <strong>not</strong> a per-repo setting a per-repo admin could toggle.</div>
+      <div>CODEOWNERS file</div>
+      <div>The routing. Names <em>whose</em> review the ruleset requires — the repo's write team. This is what makes a non-owner's PR un-mergeable until an owner approves.</div>
+      <div>Write team</div>
+      <div>The humans. Code owners, reviewers, and releasers. All of this is <strong>write-level</strong> work — being a code owner, approving PRs, cutting releases, holding the release-environment approval. None of it requires admin or maintain.</div>
+    </div>
+
+    <p>What write deliberately <em>cannot</em> do — change the ruleset, change repo settings, or allow bypass — is held only by the Terraform GitHub App and changed via reviewed PR to the org-policy repo. That is the one "admin," and it is automation, not a standing human group.</p>
+
+    <div class="callout rust">
+      <div class="label">Two risks this opens — both closed in the ruleset / CODEOWNERS</div>
+      <p><strong>Self-approval inside the write team.</strong> If the write team are the only required reviewers, a member could approve their own team's PR. Closed with ruleset settings "require approval from someone other than the last pusher" and a required-review count of 1 (or 2 for SOX-critical). A team reviewing its own code is normal and fine for most repos; the second reviewer is reserved for the sensitive tier.</p>
+      <p style="margin-top:10px"><strong>The write team weakening the gate via its own meta-files.</strong> If the write team owns <code>/CODEOWNERS</code> and <code>/.github/</code>, it could open a PR removing itself as required reviewer and self-approve. Closed by pointing those paths at the Platform team in CODEOWNERS — the write team owns the code, but not the rules about ownership or the workflows.</p>
+    </div>
+
+    <pre data-lang="CODEOWNERS"><span class="c"># the write team owns the code (write-level; no admin needed)</span>
+*                                    <span class="s">@fhlb/appdev-a</span>
+
+<span class="c"># but NOT the rules about ownership, nor the CI that could weaken them</span>
+/CODEOWNERS                          <span class="s">@fhlb/platform</span>
+/.github/                            <span class="s">@fhlb/platform</span>
+
+<span class="c"># tighter: API surface + changelog need a senior reviewer (still write-level)</span>
+/src/main/java/com/fhlb/common/api/  <span class="s">@fhlb/appdev-a-leads</span>
+/CHANGELOG.md                        <span class="s">@fhlb/appdev-a-leads</span></pre>
+
+    <h3>Where shared libraries differ from the factory — three things</h3>
+    <ol>
+      <li><strong>Consumption is via package registry, not source read.</strong> Publish versioned artifacts to GitHub Packages (Maven for the Java/Spring stack). Consuming teams pull <code>com.fhlb:common-utils:2.3.1</code> — they depend on the artifact, not the source. This decouples "who can use it" (broad, registry read) from "who can contribute" (broad, source write) and protects consumers with versioning. The factory has no consumption axis; a library has four layers — consume / read / propose / merge.</li>
+      <li><strong>Path-scoped CODEOWNERS.</strong> Gate the public API surface and changelog harder than internal refactors, because breaking changes hit every consumer.</li>
+      <li><strong>A separate release gate.</strong> Merge to <code>main</code> is not the same as publishing. A deliberate release step — versioned, full test suite, publish — runs behind a protected GitHub Environment whose required reviewer is the write team, so merge ≠ publish. Still write-level; still no admin role.</li>
+    </ol>
+
+    <div class="callout rust">
+      <div class="label">The commitment that the controls assume</div>
+      <p>The ruleset guarantees no unreviewed code reaches <code>main</code>. It does <em>not</em> guarantee anyone reviews promptly. The failure mode for inner-source libraries is the orphaned library — everyone depends on it, the write team has day jobs elsewhere, and PRs sit for weeks. That is an organizational commitment, not a config setting: before standing up any <code>fhlb-common-*</code> repo, confirm the owning write team treats inner-source review as part of its responsibilities. We are not creating a new maintainer group to carry this — we are making it an explicit expectation of the existing write team, because the blast radius of neglect is every consumer.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 9 ===================== -->
+  <section id="controls">
+    <div class="section-num">§ 09</div>
+    <h2>Controls: forking, signed commits, roles</h2>
+
+    <h3>Forking — disabled for private repos</h3>
+    <p>We disable forking of private repositories at the org level. With base <code>none</code> it is mostly moot anyway, but it closes a real data-exposure vector. Once code lives in a fork, the upstream's branch protection and rulesets do not apply to it, the fork sits outside Terraform-managed config, and forks introduce a cross-fork object-reference exposure where commit data from one fork (including private and deleted forks) can be reached from siblings. Our contribution model — branch + PR on the upstream with team access — needs no forks. The narrow exception, temporary private forks for security-advisory collaboration on public repos, remains available and is unaffected.</p>
+
+    <h3>Signed commits — required on protected branches</h3>
+    <p>A commit's author field is just text; nothing stops a local config from claiming to be someone else. Signed commits fix that — a cryptographic signature (SSH, GPG, or S/MIME) over the commit content and author, marked "Verified" by GitHub. Required on protected branches, unsigned commits are blocked. For SOX this is non-repudiation: the answer to "prove this financial-reporting change came from the attributed person" is the signature plus SCIM-managed identity. One operational note: rebase-merge produces commits GitHub cannot sign with the author's key, so prefer squash or merge-commit on protected branches.</p>
+
+    <table class="cmp">
+      <tr><th style="width:22%">Signing method</th><th>When to use</th></tr>
+      <tr><td><strong>SSH</strong></td><td>Simplest — reuse the existing auth key. Good default for most developers.</td></tr>
+      <tr><td><strong>GPG</strong></td><td>Supports key expiry and revocation, which SSH does not. Better where keys must be invalidated without rotating auth.</td></tr>
+      <tr><td><strong>S/MIME</strong></td><td>X.509 from the corporate PKI — aligns with existing AD CS / smart-card cert issuance.</td></tr>
+    </table>
+
+    <h3>Roles — write vs admin, and what each prevents</h3>
+    <p>The precise delta matters for least privilege. With base <code>none</code> and an explicit read grant, a read user can clone, read, and (where granted) open PRs from a branch. <strong>Write</strong> adds the ability to push branches directly to the upstream and merge PRs (subject to branch protection). <strong>Admin</strong> adds control of repo settings, security features, and — critically — branch protection itself, which means an admin can disable the very controls that gate write.</p>
+
+    <div class="callout">
+      <div class="label">Two rules that follow</div>
+      <p>First: branch protection only constrains write users, not admins, unless the ruleset explicitly disallows admin bypass — and because our rulesets forbid bypass for everyone (§10.2), this hole is closed by default. Second: no human holds standing repo admin. The Terraform GitHub App is the only effective admin — it owns settings and rulesets, changed via reviewed PR to the org-policy repo. Humans operate at write level (§08); admin-equivalent actions are reserved for break-glass org-owner access via Entra PIM with short, approved activation.</p>
+    </div>
+
+    <h3>How forking interacts with deployment</h3>
+    <p>A natural worry is that a write user could fork a repo and push the app to another environment. In practice a fork can build, but it cannot reach production <em>when the CD pipeline is configured correctly</em>: deployment branch policies restrict which branches deploy; production credentials live in protected GitHub Environments, not repo secrets; OIDC trust to the cloud is scoped to <code>repo:org/repo:ref:refs/heads/main</code>, which a fork's claim fails; and GitHub does not pass secrets to fork-triggered <code>pull_request</code> workflows. The exposure only opens up against misconfiguration — long-lived repo-level secrets, <code>pull_request_target</code> checking out untrusted code, or unscoped self-hosted runners. The lesson for platform engineering: harden the CD configuration rather than restricting read. Disabling forks (above) is reasonable defense-in-depth on top.</p>
+  </section>
+
+  <!-- ===================== SECTION 10 ===================== -->
+  <section id="rulesets">
+    <div class="section-num">§ 10</div>
+    <h2>Policy reference — org settings, rulesets &amp; repo configuration</h2>
+    <p>This section is the consolidated catalogue of what the org-policy repo and repo factory actually set. It is meant as the implementation checklist for the Terraform modules. Everything here is declarative config in one of the two foundational repos — nothing is clicked in the UI. Settings are grouped by where they live: organization-wide, organization rulesets (targeted by pattern or property), and per-repo configuration applied by the factory.</p>
+
+    <h3>10.1 — Organization settings</h3>
+    <p>Set once on the org via <code>github_organization_settings</code>. These are the global floor.</p>
+    <table class="cmp">
+      <tr><th style="width:46%">Setting</th><th>Decision</th></tr>
+      <tr><td>Base permission for members</td><td><code>none</code> — no implicit read (§03)</td></tr>
+      <tr><td>Default repository visibility</td><td><code>private</code></td></tr>
+      <tr><td>Members can create repositories</td><td><code>false</code> — all four create flags off; factory only (§07)</td></tr>
+      <tr><td>Members can fork private repositories</td><td><code>false</code> — closes cross-fork exposure (§09)</td></tr>
+      <tr><td>Members can create public repositories</td><td><code>false</code></td></tr>
+      <tr><td>Members can create pages</td><td><code>false</code> (optional, same rationale)</td></tr>
+      <tr><td>Default branch name</td><td><code>main</code></td></tr>
+      <tr><td>Two-factor authentication required</td><td><code>true</code> for all members (enforce via SSO/Entra)</td></tr>
+      <tr><td>Web commit signoff required</td><td><code>true</code></td></tr>
+      <tr><td>Third-party application access policy</td><td>Restricted — only org owners approve OAuth/GitHub Apps</td></tr>
+      <tr><td>Dependency graph / Dependabot alerts</td><td>Enabled org-wide</td></tr>
+      <tr><td>Secret scanning + push protection</td><td>Enabled org-wide as default for new repos (§06)</td></tr>
+      <tr><td>Advanced Security</td><td>Enabled where licensed; code scanning default-on for new repos</td></tr>
+      <tr><td>Actions policy</td><td>Allowlist — only permitted actions/reusable workflows (verified creators + explicit allowlist)</td></tr>
+      <tr><td>Actions: default <code>GITHUB_TOKEN</code> permissions</td><td>Read-only by default; elevate per-workflow</td></tr>
+      <tr><td>Actions: fork-PR workflow approval</td><td>Require approval for all outside / first-time contributors</td></tr>
+      <tr><td>Runner groups</td><td>Scoped to specific repos; no org-wide unrestricted self-hosted runners</td></tr>
+      <tr><td>OIDC subject claim template</td><td>Customized to include repo + environment for scoped cloud trust (§09)</td></tr>
+      <tr><td>SCIM provisioning</td><td>Enabled; single connection from Entra (§04)</td></tr>
+      <tr><td>IP allow list</td><td>Enabled if required by network policy</td></tr>
+    </table>
+
+    <h3>10.2 — Organization rulesets</h3>
+    <p>Org-level rulesets (<code>github_organization_ruleset</code>) target repositories by name pattern or custom property and apply uniformly. This is how a control reaches every repo at once without per-repo configuration — and why no per-repo admin is needed to maintain protection (§08). Tiers scale the strictness.</p>
+
+    <table class="cmp">
+      <tr><th style="width:34%">Rule</th><th>Tier 1</th><th>Tier 2 / 3</th></tr>
+      <tr><td>Restrict deletions (of <code>main</code> / the repo)</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Block force-pushes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Require a pull request before merging</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Required approving reviews</td><td>1</td><td>2</td></tr>
+      <tr><td>Require review from Code Owners</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Require approval of the most recent push (not last pusher)</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Dismiss stale approvals on new commits</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Require conversation resolution before merge</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Require status checks to pass</td><td>Yes (CI, secret scan)</td><td>Yes (+ code scan, policy checks)</td></tr>
+      <tr><td>Require branches up to date before merge</td><td>Optional</td><td>Yes</td></tr>
+      <tr><td>Require signed commits</td><td>Recommended</td><td>Required (§09)</td></tr>
+      <tr><td>Require linear history</td><td>Optional</td><td>Yes</td></tr>
+      <tr><td>Require deployments to succeed (named environments)</td><td>—</td><td>Yes for prod-deploying repos</td></tr>
+      <tr><td>Restrict who can push / merge (bypass list)</td><td>Empty</td><td>Empty — no bypass</td></tr>
+      <tr><td>Do not allow bypassing the above (incl. admins)</td><td>Yes</td><td>Yes — critical for SOX (§08, §09)</td></tr>
+      <tr><td>Restrict creation/renaming to factory pattern</td><td>Yes (tag/branch name rules)</td><td>Yes</td></tr>
+    </table>
+
+    <div class="callout teal">
+      <div class="label">Targeting by custom property, not enumeration</div>
+      <p>Rulesets target repos by <code>repo:fhlb-*</code> name patterns or by custom property (<code>tier</code>, <code>domain</code>, <code>compliance</code>). When FHFA guidance shifts and a new required check or signed commits must apply everywhere in a class, it is a few-line change to one org ruleset — not an edit to N repos. This is the single biggest operational reason the controls live at org level rather than per repo.</p>
+    </div>
+
+    <h3>10.3 — Custom properties (the classification axis)</h3>
+    <p>Set on every repo by the factory; rulesets and access logic target them.</p>
+    <div class="ns-grid">
+      <div>tier</div><div><code>1</code> / <code>2</code> / <code>3</code> — drives ruleset strictness and access model</div>
+      <div>domain</div><div><code>appdev-a</code>, <code>appdev-b</code>, <code>iac</code>, <code>data</code>, … — primary owning domain</div>
+      <div>compliance</div><div><code>sox</code>, <code>pii</code>, <code>none</code> — regulatory classification</div>
+      <div>data_class</div><div><code>public</code> / <code>internal</code> / <code>confidential</code> / <code>restricted</code></div>
+      <div>lifecycle</div><div><code>active</code> / <code>maintenance</code> / <code>archived</code> / <code>experimental</code></div>
+      <div>contributing_teams</div><div>comma-separated teams with write beyond the owning domain</div>
+    </div>
+
+    <h3>10.4 — Per-repository configuration (applied by the factory)</h3>
+    <p>What <code>github_repository</code> and its companion resources set on creation, consistently, for every repo.</p>
+    <table class="cmp">
+      <tr><th style="width:46%">Configuration</th><th>Default</th></tr>
+      <tr><td>Visibility</td><td><code>private</code></td></tr>
+      <tr><td>Allow forking</td><td><code>false</code></td></tr>
+      <tr><td>Merge strategies</td><td>Squash + merge-commit on; rebase off (preserves signing — §09)</td></tr>
+      <tr><td>Auto-delete head branches on merge</td><td><code>true</code></td></tr>
+      <tr><td>Allow auto-merge</td><td><code>true</code> (still gated by required checks/reviews)</td></tr>
+      <tr><td>Issues / Projects / Wiki</td><td>Issues on; Wiki off (use docs in-repo)</td></tr>
+      <tr><td>Vulnerability alerts</td><td>Enabled</td></tr>
+      <tr><td>Dependabot security updates</td><td>Enabled</td></tr>
+      <tr><td>Secret scanning + push protection</td><td>Enabled</td></tr>
+      <tr><td>Code scanning default setup</td><td>Enabled where licensed</td></tr>
+      <tr><td>CODEOWNERS</td><td>Seeded; <code>/CODEOWNERS</code> and <code>/.github/</code> owned by Platform (§08)</td></tr>
+      <tr><td>Team grants</td><td>Owning write team = write; read groups per tier/domain</td></tr>
+      <tr><td>Environments</td><td><code>dev</code> / <code>staging</code> / <code>prod</code> with branch policies + required reviewers for prod</td></tr>
+      <tr><td>Deployment branch policy (prod)</td><td>Only <code>main</code> from this repo deploys to prod (§09)</td></tr>
+      <tr><td>Repo-level secrets</td><td>Avoided — secrets live in environments, not repo scope</td></tr>
+      <tr><td>Topics + custom properties</td><td>Set from factory inputs (10.3)</td></tr>
+      <tr><td>Default branch</td><td><code>main</code>, protected by the org ruleset matching its tier</td></tr>
+    </table>
+
+    <h3>10.5 — Environment protection (deploy &amp; release gates)</h3>
+    <p>Environments are where production access and release publishing are gated — the control that defangs the "fork-to-prod" concern (§09) and separates merge from publish (§08).</p>
+    <div class="ns-grid">
+      <div>Required reviewers</div><div>Named team must approve before a deployment/release job proceeds</div>
+      <div>Wait timer</div><div>Optional delay before prod deploys (change-window alignment)</div>
+      <div>Deployment branch policy</div><div>Only <code>main</code> from the same repo — fork branches do not qualify</div>
+      <div>Environment secrets</div><div>Prod credentials live here, not in repo secrets; not exposed to fork PRs</div>
+      <div>OIDC trust</div><div>Cloud trust scoped to <code>repo:org/repo:environment:prod</code></div>
+    </div>
+
+    <div class="callout">
+      <div class="label">How the tiers compose</div>
+      <p>A repo's <code>tier</code> custom property selects which org ruleset applies, the factory sets the per-repo config, and environments gate deploys/releases. None of it is a per-repo human decision after creation — the tier is the dial, Terraform is the hand on it, and a change of class is a property change reviewed by Platform, recorded in git.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 11 ===================== -->
+  <section id="day2">
+    <div class="section-num">§ 11</div>
+    <h2>Open questions &amp; what to build first</h2>
+
+    <h3>Confirmations still needed</h3>
+    <ul>
+      <li><strong>IIQ request latency</strong> — the load-bearing assumption. IAM team to confirm cross-team read clears fast enough that people don't route around it.</li>
+      <li><strong>IIQ → Entra plumbing</strong> — confirm IIQ writes group membership into Entra (the assumed pattern) and that SCIM is driven from the right attribute, so the published diagram matches the actual flow.</li>
+      <li><strong>Secret sweep</strong> — before granting broad IaC read, sweep repos inherited from GitLab for in-code secrets; stand up secret scanning + push protection org-wide.</li>
+      <li><strong>Stewardship mandate</strong> — confirm the owning write team for each shared library treats inner-source PR review as an explicit responsibility before launch. No new maintainer group is created; the expectation sits on the existing write team.</li>
+    </ul>
+
+    <h3>Sequencing</h3>
+    <ol>
+      <li><strong>Stand up the org-policy repo first.</strong> Base permission <code>none</code>, security defaults, rulesets, the team definitions, fork disabled, signed commits required. This is the foundation everything else binds to.</li>
+      <li><strong>Build the repo factory, then disable UI creation.</strong> Prove the factory provisions one repo correctly end-to-end before flipping <code>members_can_create_repositories</code> to <code>false</code>.</li>
+      <li><strong>Wire SCIM and the first team mappings.</strong> Start with the two app dev write teams and their mutual read groups. Validate the full chain with one real user.</li>
+      <li><strong>Add the coarse read groups.</strong> IaC read (shareable), cross-team read, repo-factory propose. Confirm Copilot context breadth improves as grants land.</li>
+      <li><strong>Establish the first shared library</strong> on the inner-source pattern, with GitHub Packages distribution and a named owning write team — as the reference others copy.</li>
+    </ol>
+
+    <div class="callout teal">
+      <div class="label">What good looks like</div>
+      <p>An auditor asks: "Who can read the examination-tracker repository, who approved their access, and when was it last recertified?" The answer is a single view in Identity IQ joined to the team grant in the Terraform config — no GitHub spelunking, no ticket archaeology. The architecture above produces that answer as a side effect, not an add-on.</p>
+    </div>
+  </section>
+
+  <footer class="doc-end">
+    GITHUB MIGRATION · ARCHITECTURE &amp; ACCESS GOVERNANCE REFERENCE · INTERNAL · v1 · JUNE 2026
+  </footer>
+
+</main>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    <div>© <span id="year"></span> my-learnings</div>
+    <div><a href="../">home</a></div>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+</body>
+</html>

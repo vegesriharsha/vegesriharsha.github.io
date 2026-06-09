@@ -13,6 +13,13 @@ window.SITE_CONTENT = {
   // the series in sequence at the top of the Notes column.
   posts: [
     {
+      title: "GitLab → GitHub: Org Structure & Access Governance",
+      slug: "github-migration-architecture.html",
+      date: "2026-06-08",
+      summary: "A platform-engineering reference for the GitLab → GitHub move: one org with base-none least privilege, the Identity IQ → Entra → SCIM → Teams access chain, Terraform-enforced policy, and an inner-source model for shared libraries.",
+      tags: ["github", "platform-engineering", "access-governance"]
+    },
+    {
       title: "Agentic Architecture with Spring AI and Embabel",
       slug: "agentic-architecture-spring-ai-embabel.html",
       date: "2026-05-28",
@@ -114,15 +121,4 @@ window.SITE_CONTENT = {
     if (!root) return;
     if (!items || items.length === 0) {
       root.innerHTML = '<div class="empty">Nothing here yet — add an entry in <code>assets/js/posts.js</code>.</div>';
-      return;
-    }
-    var sorted = items.slice().sort(byDateDesc);
-    root.innerHTML = sorted.map(function (i) { return cardHtml(i, kind, folder); }).join("");
-  }
-  window.renderSite = function () {
-    var c = window.SITE_CONTENT || { posts: [], visualizations: [] };
-    renderInto("posts-grid", c.posts, "note", "posts");
-    renderInto("viz-grid", c.visualizations, "viz", "visualizations");
-  };
-  document.addEventListener("DOMContentLoaded", window.renderSite);
-})();
+ 
